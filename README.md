@@ -159,3 +159,25 @@ naming four artists matches no single entry.
 Know what step 3 asserts: an English-language song by a Vietnamese artist will
 be tagged Vietnamese. That is a judgement about the artist, not the recording.
 Leave the flag off if you want the language of the words being sung.
+
+## Filenames with no spaces
+
+Some uploads arrive as `CoChutNgotNgao-UongToLangSilenceWangBY2-3710201.mp3`:
+title, artist and an upload id run together with no spaces. Three rules recover
+them — strip a trailing numeric id, split a run of words on its capitals, then
+put spaces around a bare dash, but only when both sides are already multi-word
+so `Jay-Z`, `Son Tung M-TP`, `AC/DC` and `BY2` survive. The embedded artist tag
+settles which half is which, and restores the diacritics the filename dropped.
+
+## The limit
+
+A class of file defeats every rule here: a Chinese song republished with both
+its title and its artist transliterated into Vietnamese. `Dap An Cua Ban` by
+`A Nhũng (Rong)` is 你的答案 by 阿冗, but nothing in the file says so. Every string
+in it is Vietnamese text, so the language detector calls it Vietnamese or
+English, and MusicBrainz indexes the artist only under 阿冗, which the file does
+not contain. There is no signal to find.
+
+Audio fingerprinting (AcoustID) is the answer to this and to most of the
+remaining unknown years, because it identifies a recording from the audio and
+never sees the text at all. It needs the `fpcalc` binary and an API key.

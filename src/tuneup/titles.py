@@ -30,11 +30,28 @@ JUNK_BRACKET = re.compile(
     r"|\d{2,4}\s*kbps|nhac\s*chuong)\s*[\]\)\}]",
     re.IGNORECASE,
 )
+UPLOAD_ID = re.compile(r"[\s_-]+\d{5,}\s*$")
+CAMEL_RUN = re.compile(r"(?<=[a-z\d])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+HAS_SPACE = re.compile(r"\s")
+TIGHT_DASH = re.compile(r"(?<=[^\s-])-(?=[^\s-])")
 BITRATE = re.compile(r"[\s_-]*\d{2,4}\s*kbps\b", re.IGNORECASE)
 BARE_JUNK_PHRASE = re.compile(
     r"\b(?:official|officiel)\s+(?:\w+\s+){0,2}?"
     r"(?:video|audio|mv|visualizer|visualiser|version|visual|lyrics?)\b"
-    r"|\blyrics?\s*video\b|\bm/v\b|\bofficial\s*trailer\b",
+    r"|\blyrics?\s*(?:video|in\s+description)?\b"
+    r"|\bfull\s+lyrics\b|\blirik(?:\s+lagu)?\b|\bterjemahan\b"
+    r"|\bm/v\b|\bofficial\s*trailer\b|\bhq\b|\b1080p\b|\b720p\b",
+    re.IGNORECASE,
+)
+DESCRIPTOR = (
+    r"beautiful|uplifting|emotive|emotional|orchestral|triumphant|choral"
+    r"|inspirational|epic|cinematic|relaxing|powerful|dramatic|vocal"
+)
+DESCRIPTOR_BRACKET = re.compile(
+    r"[\[\(\{]"
+    r"[^\]\)\}]*?(?:" + DESCRIPTOR + r")"
+    r"[^\]\)\}]*?(?:" + DESCRIPTOR + r")"
+    r"[^\]\)\}]*[\]\)\}]",
     re.IGNORECASE,
 )
 SUBTITLE_MARKER = re.compile(
@@ -50,7 +67,7 @@ LEADING_TRACK_NUMBER = re.compile(r"^\s*(?:#\d{1,3}\s+|\d{1,3}\s*[.)\-_]\s*)(?=\
 SEPARATORS = re.compile(r"[_]+")
 CJK_BRACKETS = re.compile(r"[「」『』【】〈〉《》]")
 LEADING_BRACKET_TAG = re.compile(r"^\s*[\[\(\{][^\]\)\}]{1,30}[\]\)\}]\s*")
-PIPE_SPLIT = re.compile(r"\s*[|｜]\s*")
+PIPE_SPLIT = re.compile(r"\s*[|｜║∥]\s*")
 FULLWIDTH_COLON = "："
 MULTI_SPACE = re.compile(r"\s{2,}")
 EDGE_JUNK = re.compile(r"^[\s\-–—_.·|]+|[\s\-–—_.·|]+$")
@@ -131,9 +148,13 @@ def prettify(text: str, is_filename: bool = False) -> str:
     cleaned = BITRATE.sub(" ", cleaned)
     cleaned = BARE_JUNK_PHRASE.sub(" ", cleaned)
     cleaned = SUBTITLE_MARKER.sub(" ", cleaned)
+    cleaned = DESCRIPTOR_BRACKET.sub(" ", cleaned)
     cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = EMPTY_BRACKET.sub(" ", cleaned)
     cleaned = TRAILING_OFFICIAL.sub("", cleaned)
+    cleaned = UPLOAD_ID.sub("", cleaned)
+    cleaned = _split_camel(cleaned)
+    cleaned = _space_tight_dash(cleaned)
     cleaned = MULTI_SPACE.sub(" ", cleaned)
     return EDGE_JUNK.sub("", cleaned)
 
@@ -349,6 +370,38 @@ def choose(
         return TitleChoice(title=from_metadata, source="metadata", artist_hint=None)
     log.warning("no usable title for %s, keeping raw stem", path)
     return TitleChoice(title=path.stem, source="stem", artist_hint=None)
+
+
+def _split_camel(text: str) -> str:
+    """Space out a run-together name such as ``CoChutNgotNgao``.
+
+    Some uploaders strip every space from a filename, leaving the words joined
+    by their capitals. Only segments that contain no space at all and change
+    case at least twice are touched, so ``Jay-Z``, ``BY2``, ``AC/DC`` and any
+    ordinary title keep their shape.
+    """
+    parts = []
+    for segment in text.split(" "):
+        if HAS_SPACE.search(segment) or len(CAMEL_RUN.findall(segment)) < 2:
+            parts.append(segment)
+        else:
+            parts.append(CAMEL_RUN.sub(" ", segment))
+    return " ".join(parts)
+
+
+def _space_tight_dash(text: str) -> str:
+    """Put spaces around a dash that separates two multi-word halves.
+
+    After a run-together filename is split into words, its title and artist are
+    still joined by a bare dash. A dash only becomes a separator when both
+    sides already contain a space, so hyphenated names such as ``Jay-Z`` and
+    ``Son Tung M-TP`` are left alone.
+    """
+    for match in reversed(list(TIGHT_DASH.finditer(text))):
+        left, right = text[: match.start()], text[match.end() :]
+        if HAS_SPACE.search(left) and HAS_SPACE.search(right):
+            text = f"{left} - {right}"
+    return text
 
 
 def _before_pipe(text: str) -> str:
