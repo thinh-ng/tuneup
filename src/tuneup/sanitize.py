@@ -21,6 +21,7 @@ from .config import (
     sidecar_dir,
 )
 from .covers import CoverFetcher
+from .years import YearLookup
 from .errors import TuneupError
 from .harvest import HarvestStore
 from .track import (
@@ -191,6 +192,31 @@ def fill_album_years(changes: list[PlannedChange]) -> int:
     return filled
 
 
+def lookup_missing_years(
+    changes: list[PlannedChange], lookup: YearLookup
+) -> int:
+    """Ask MusicBrainz for the years the files themselves do not carry.
+
+    Only tracks still without a year are queried, and only a verified match is
+    accepted, so this adds years to some of them and leaves the rest Unknown.
+    """
+    filled = 0
+    for index, change in enumerate(changes):
+        if change.core.year is not None:
+            continue
+        year = lookup.find(change.core.artist, change.core.title)
+        if year is None:
+            continue
+        changes[index] = replace(
+            change,
+            core=replace(change.core, year=year),
+            outcome=replace(change.outcome, year=year, year_source="musicbrainz"),
+        )
+        filled += 1
+    log.info("recovered %d years from MusicBrainz", filled)
+    return filled
+
+
 def apply_changes(
     changes: list[PlannedChange],
     store: HarvestStore,
@@ -253,6 +279,12 @@ def main(argv: list[str] | None = None) -> int:
         help="required with --apply; confirms the library is backed up",
     )
     parser.add_argument(
+        "--lookup-years",
+        action="store_true",
+        help="ask MusicBrainz for years the files lack; adds about a quarter of "
+        "them and paces at one request per second",
+    )
+    parser.add_argument(
         "--fetch-missing-art",
         action="store_true",
         help="look up cover art online for files that have none",
@@ -286,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     artist_map = artists.build_map(collect_artist_names(sources, pool))
     changes = plan(sources, artist_map, pool)
     fill_album_years(changes)
+    if args.lookup_years:
+        lookup_missing_years(changes, YearLookup())
     write_reports(args.library, changes, artist_map)
 
     if not args.apply:

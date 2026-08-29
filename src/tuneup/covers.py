@@ -9,7 +9,6 @@ itself rather than relying on the caller to.
 """
 
 import logging
-import time
 
 import musicbrainzngs
 import requests
@@ -20,6 +19,7 @@ from .config import (
     MUSICBRAINZ_TIMEOUT,
     MUSICBRAINZ_VERSION,
 )
+from .musicbrainz import RateLimiter
 from .track import Artwork
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class CoverFetcher:
             MUSICBRAINZ_APP, MUSICBRAINZ_VERSION, contact or None
         )
         self._session = requests.Session()
-        self._last_request = 0.0
+        self._limiter = RateLimiter(REQUEST_INTERVAL_SECONDS)
         self._cache: dict[tuple[str, str], Artwork | None] = {}
 
     def fetch(self, artist: str | None, album: str | None) -> Artwork | None:
@@ -61,7 +61,7 @@ class CoverFetcher:
         self._session.close()
 
     def _release_group_id(self, artist: str, album: str) -> str | None:
-        self._wait_turn()
+        self._limiter.wait()
         try:
             result = musicbrainzngs.search_release_groups(
                 artist=artist, releasegroup=album, limit=1
@@ -75,7 +75,7 @@ class CoverFetcher:
         return groups[0].get("id")
 
     def _download(self, mbid: str) -> Artwork | None:
-        self._wait_turn()
+        self._limiter.wait()
         url = COVER_ART_URL.format(mbid=mbid)
         try:
             response = self._session.get(url, timeout=MUSICBRAINZ_TIMEOUT)
@@ -92,9 +92,3 @@ class CoverFetcher:
             log.warning("ignoring cover art of type %r for %s", mime, mbid)
             return None
         return Artwork(data=response.content, mime=mime)
-
-    def _wait_turn(self) -> None:
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < REQUEST_INTERVAL_SECONDS:
-            time.sleep(REQUEST_INTERVAL_SECONDS - elapsed)
-        self._last_request = time.monotonic()

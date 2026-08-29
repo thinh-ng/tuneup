@@ -50,7 +50,8 @@ docker compose run --rm tuneup /library --apply
 irreversible.
 
 Other flags: `--limit N` for a trial run, `--no-audio` to skip Essentia (Language,
-Decade and Duration only), `--fetch-missing-art` to look up covers online.
+Decade and Duration only), `--fetch-missing-art` to look up covers online,
+`--lookup-years` to recover missing years from MusicBrainz.
 
 `.tuneup/` holds `report.json` (title and artist changes), `artists.json` (the
 spelling map), `harvest.json` (pre-wipe audit record) and `tags.json`.
@@ -96,22 +97,37 @@ Nhạc Trữ Tình), and the confidence thresholds live there.
 574 MB of that is TensorFlow, the eight models are 23 MB. Essentia has no Windows
 wheels, which is why the tagger runs in Docker while the sanitizer runs natively.
 
-## Why so many decades are Unknown
+## Unknown decades
 
-A year that is not in the file cannot be recovered reliably. Measured on a
-836-file library where 123 had no year:
+A year that is not in the file has to come from somewhere else, and on this
+library nothing reliable does. Measured on 836 files where 123 had no year:
 
 ```
-Album siblings agree on a year   0 files - the yearless ones have no album either
-Year present in the filename     6 files - 5 are false ("The International 2018")
-MusicBrainz, match verified      2 of 18 sampled, and one of those two was a
-                                 reissue date rather than the original release
-MusicBrainz, unverified          fills 100% - with confident garbage
+Album siblings agree on a year   0    the yearless files have no album either
+Year in the filename             6    5 are false ("The International 2018")
+MusicBrainz, unverified          123  fills everything, frequently wrong
+MusicBrainz, verified            26   and roughly half of those are wrong too
 ```
 
-Searching MusicBrainz by artist and title always returns something, which is how
-an auto-tagger ends up asserting that a 2021 Vietnamese single came out in 2026.
-`fill_album_years` is wired in because it is free and cannot be wrong; text search
-is not, because it can. Audio fingerprinting (AcoustID) identifies a recording
-rather than fuzzy-matching its name and would do better, at the cost of the
-`fpcalc` binary and an API key.
+`--lookup-years` exists and is off by default. Do not turn it on expecting
+correct years. Spot-checked against tracks whose release year is not in doubt,
+it returned 2023 for Daft Punk's *Beyond* (2013), 2005 for Green Day's
+*Holiday* (2004), 1992 for *November Rain* (1991) and 1984 for *Piano Man*
+(1973).
+
+The cause is structural, not a tuning problem. A MusicBrainz *recording* is one
+recorded performance, and a text search matches whichever recording sits on a
+reissue, compilation, live album or broadcast. The search response carries only
+a partial release list and no `first-release-date`, so there is nothing in the
+result that identifies the original release. Filtering by release-group type and
+re-querying the recording in full both failed to fix it.
+
+Years recovered this way are marked `year_source: musicbrainz` in the report, so
+they can be found and reverted.
+
+What would actually work is audio fingerprinting: AcoustID identifies the exact
+recording from the audio rather than guessing from its name. It needs the
+`fpcalc` binary and an API key, and it is not wired in.
+
+Many of the 123 have no release year in existence -- they are uploads that were
+never commercially released. `Unknown` is the true answer for those.
