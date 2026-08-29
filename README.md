@@ -12,7 +12,7 @@ network in the default path, same result on every run.
 Tag       Values                                   Source
 --------  ---------------------------------------  ----------------------------
 Language  Vietnamese, English, Chinese, Korean,    Unicode blocks and Vietnamese
-          Japanese, Instrumental, Other            diacritics in title/artist
+          Japanese, Instrumental                   diacritics in title/artist
 Genre     16 fixed values, incl. Bolero            Essentia Discogs-EffNet
 Mood      Happy, Sad, Relaxed, Aggressive,         Essentia mood models
           Party, Neutral
@@ -53,7 +53,7 @@ Other flags: `--limit N` for a trial run, `--no-audio` to skip Essentia (Languag
 Decade and Duration only), `--fetch-missing-art` to look up covers online.
 
 `.tuneup/` holds `report.json` (title and artist changes), `artists.json` (the
-spelling map), `harvest.json` (pre-wipe state, for rollback) and `tags.json`.
+spelling map), `harvest.json` (pre-wipe audit record) and `tags.json`.
 
 ## Which half of a filename is the artist
 
@@ -73,7 +73,7 @@ Combined credits are split, so `Nguyen Hai Phong, Pmar` also vouches for
 
 ## Configuration
 
-`src/tuneup/config.py` — `GENRES` and `DISCOGS_PARENT_TO_GENRE` shape the taxonomy,
+`src/tuneup/config.py` — `DISCOGS_PARENT_TO_GENRE` shapes the taxonomy,
 `GENRE_ARTIST_OVERRIDES` assigns genres the Discogs model cannot produce (Bolero,
 Nhạc Trữ Tình), and the confidence thresholds live there.
 

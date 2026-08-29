@@ -147,6 +147,14 @@ class Analyzer:
         Raises UnreadableAudio when Essentia cannot decode the file.
         """
         embeddings = self._embed(path)
+        if len(embeddings) == 0:
+            raise UnreadableAudio(f"{str(path)!r} produced no audio frames")
+        try:
+            return self._verdict(embeddings)
+        except RuntimeError as exc:
+            raise UnreadableAudio(f"{str(path)!r}: {exc}") from exc
+
+    def _verdict(self, embeddings) -> AudioVerdict:
         return AudioVerdict(
             genre=self._predict_genre(embeddings),
             mood=self._predict_mood(embeddings),
@@ -162,7 +170,12 @@ class Analyzer:
             )()
         except RuntimeError as exc:
             raise UnreadableAudio(f"essentia could not decode {str(path)!r}") from exc
-        return self._embeddings(audio)
+        if len(audio) == 0:
+            raise UnreadableAudio(f"{str(path)!r} decoded to an empty buffer")
+        try:
+            return self._embeddings(audio)
+        except RuntimeError as exc:
+            raise UnreadableAudio(f"{str(path)!r}: {exc}") from exc
 
     def _predict_genre(self, embeddings) -> str:
         averaged = self._numpy.mean(self._genre(embeddings), axis=0)
@@ -171,7 +184,7 @@ class Analyzer:
             parent = label.split(DISCOGS_LABEL_SEPARATOR)[0]
             totals[parent] = totals.get(parent, 0.0) + float(score)
         best_parent = max(totals, key=totals.get)
-        if totals[best_parent] < GENRE_CONFIDENCE:
+        if not totals[best_parent] >= GENRE_CONFIDENCE:
             return DEFAULT_GENRE
         return DISCOGS_PARENT_TO_GENRE.get(best_parent, DEFAULT_GENRE)
 
@@ -187,7 +200,7 @@ class Analyzer:
             averaged = self._numpy.mean(head(embeddings), axis=0)
             scores[mood] = float(averaged[index])
         best = max(scores, key=scores.get)
-        if scores[best] < MOOD_CONFIDENCE:
+        if not scores[best] >= MOOD_CONFIDENCE:
             return DEFAULT_MOOD
         return best
 

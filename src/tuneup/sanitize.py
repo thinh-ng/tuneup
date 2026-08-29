@@ -14,8 +14,13 @@ from pathlib import Path
 
 from . import artists, titles
 from .audiofile import iter_audio_files, open_audio
+from .config import (
+    ARTIST_MAP_FILENAME,
+    NON_ARTIST_WORDS,
+    REPORT_FILENAME,
+    sidecar_dir,
+)
 from .covers import CoverFetcher
-from .config import ARTIST_MAP_FILENAME, REPORT_FILENAME, sidecar_dir
 from .errors import TuneupError
 from .harvest import HarvestStore
 from .track import (
@@ -57,6 +62,10 @@ def build_artist_pool(sources: dict[Path, SourceTags]) -> dict[str, int]:
     repeat across a library and song titles do not, so a repeated half is
     almost always the artist. This is what tells ``Title - Artist`` filenames
     apart from ``Artist - Title`` ones without assuming either convention.
+
+    Production words are removed afterwards: a library with forty
+    ``Song - Remix`` filenames would otherwise decide ``Remix`` is a very
+    well-attested artist.
     """
     pool: Counter[str] = Counter()
     for tags in sources.values():
@@ -74,6 +83,8 @@ def build_artist_pool(sources: dict[Path, SourceTags]) -> dict[str, int]:
         if count > 1:
             pool[key] += count
     pool.pop("", None)
+    for word in NON_ARTIST_WORDS:
+        pool.pop(word, None)
     log.info("artist pool holds %d names", len(pool))
     return dict(pool)
 
@@ -163,6 +174,7 @@ def apply_changes(
             audio = open_audio(change.path)
             artwork = audio.read_artwork()
             store.record(change.path, audio.read(), artwork is not None)
+            store.checkpoint()
             if artwork is None and fetcher is not None:
                 artwork = fetcher.fetch(change.core.artist, change.core.album)
             audio.rewrite(change.core, artwork)
@@ -256,8 +268,12 @@ def main(argv: list[str] | None = None) -> int:
 
     store = HarvestStore(args.library)
     fetcher = CoverFetcher() if args.fetch_missing_art else None
-    failures = apply_changes(changes, store, fetcher)
-    store.save()
+    try:
+        failures = apply_changes(changes, store, fetcher)
+    finally:
+        store.save()
+        if fetcher is not None:
+            fetcher.close()
     print(f"sanitized {len(changes) - failures} files, {failures} failed")
     return 1 if failures else 0
 

@@ -9,7 +9,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/fetch-models.sh /usr/local/bin/fetch-models.sh
-RUN /usr/local/bin/fetch-models.sh /models
+RUN sh /usr/local/bin/fetch-models.sh /models
 
 WORKDIR /app
 COPY pyproject.toml README.md ./

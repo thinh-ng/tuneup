@@ -3,11 +3,18 @@
 Presents one interface over ID3 (MP3), Vorbis comments (FLAC, Ogg, Opus) and
 MP4 atoms (M4A), so no pipeline above this module branches on file format.
 
+Every mutagen failure is converted to :class:`UnreadableAudio` here, because
+``mutagen.MutagenError`` derives from ``Exception`` rather than ``OSError`` and
+would otherwise escape the per-file handlers and abort a whole run.
+
 Knows nothing about how a tag value is decided, only how to store it.
 """
 
+import base64
+import contextlib
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from pathlib import Path
 
 import mutagen
@@ -39,10 +46,22 @@ DURATION_KEY = "DURATION"
 LANGUAGE_KEY = "LANGUAGE"
 MOOD_KEY = "MOOD"
 
+FRONT_COVER = 3
+VORBIS_PICTURE_KEY = "metadata_block_picture"
+
 MP4_COVER_FORMATS = {
     "image/jpeg": MP4Cover.FORMAT_JPEG,
     "image/png": MP4Cover.FORMAT_PNG,
 }
+
+
+@contextlib.contextmanager
+def _wrap_errors(path: Path) -> Iterator[None]:
+    """Re-raise any mutagen failure for ``path`` as UnreadableAudio."""
+    try:
+        yield
+    except mutagen.MutagenError as exc:
+        raise UnreadableAudio(f"{str(path)!r}: {exc}") from exc
 
 
 def _leading_year(value: object) -> int | None:
@@ -50,6 +69,16 @@ def _leading_year(value: object) -> int | None:
     if len(text) < 4 or not text[:4].isdigit():
         return None
     return int(text[:4])
+
+
+def _best_picture(pictures: list) -> object | None:
+    """Return the front cover if one is present, else the first picture."""
+    if not pictures:
+        return None
+    for picture in pictures:
+        if getattr(picture, "type", None) == FRONT_COVER:
+            return picture
+    return pictures[0]
 
 
 class AudioFile(ABC):
@@ -68,9 +97,11 @@ class AudioFile(ABC):
 
     @abstractmethod
     def rewrite(self, core: CoreTags, artwork: Artwork | None) -> None:
-        """Delete every existing tag, then write ``core`` and ``artwork`` back.
+        """Replace every tag with ``core`` and ``artwork`` in a single write.
 
-        Destructive and irreversible for anything not carried in ``core``.
+        Destructive and irreversible for anything not carried in ``core``. The
+        replacement is one write rather than a delete followed by a write, so a
+        failure part-way cannot leave the file stripped of everything.
         """
 
     @abstractmethod
@@ -93,16 +124,12 @@ class Mp3File(AudioFile):
         )
 
     def read_artwork(self) -> Artwork | None:
-        frames = self._tag().getall("APIC")
-        if not frames:
+        frame = _best_picture(self._tag().getall("APIC"))
+        if frame is None:
             return None
-        return Artwork(data=frames[0].data, mime=frames[0].mime or "image/jpeg")
+        return Artwork(data=frame.data, mime=frame.mime or "image/jpeg")
 
     def rewrite(self, core: CoreTags, artwork: Artwork | None) -> None:
-        try:
-            ID3(self.path).delete()
-        except ID3NoHeaderError:
-            log.debug("no existing ID3 tag on %s", self.path)
         tag = ID3()
         tag.add(TIT2(encoding=3, text=core.title))
         if core.artist:
@@ -113,9 +140,16 @@ class Mp3File(AudioFile):
             tag.add(TDRC(encoding=3, text=str(core.year)))
         if artwork is not None:
             tag.add(
-                APIC(encoding=3, mime=artwork.mime, type=3, desc="", data=artwork.data)
+                APIC(
+                    encoding=3,
+                    mime=artwork.mime,
+                    type=FRONT_COVER,
+                    desc="",
+                    data=artwork.data,
+                )
             )
-        tag.save(self.path, v2_version=4)
+        with _wrap_errors(self.path):
+            tag.save(self.path, v1=0, v2_version=4)
 
     def write_classification(self, tags: ClassificationTags) -> None:
         tag = self._tag()
@@ -127,7 +161,8 @@ class Mp3File(AudioFile):
         self._set_txxx(tag, DECADE_KEY, tags.decade)
         if tags.duration:
             self._set_txxx(tag, DURATION_KEY, tags.duration)
-        tag.save(self.path, v2_version=4)
+        with _wrap_errors(self.path):
+            tag.save(self.path, v2_version=4)
 
     def _tag(self) -> ID3:
         try:
@@ -135,7 +170,7 @@ class Mp3File(AudioFile):
         except ID3NoHeaderError:
             return ID3()
         except mutagen.MutagenError as exc:
-            raise UnreadableAudio(f"{self.path!r} has an unreadable ID3 tag") from exc
+            raise UnreadableAudio(f"{str(self.path)!r}: {exc}") from exc
 
     def _length(self) -> float | None:
         try:
@@ -175,7 +210,12 @@ class Mp3File(AudioFile):
 
 
 class VorbisFile(AudioFile):
-    """FLAC, Ogg Vorbis and Opus adapter over plain uppercase comment keys."""
+    """FLAC, Ogg Vorbis and Opus adapter over plain uppercase comment keys.
+
+    FLAC keeps cover art in picture blocks; Ogg and Opus keep it base64-encoded
+    in a ``metadata_block_picture`` comment. Both are read and restored, so a
+    rewrite does not silently drop the artwork of a non-FLAC file.
+    """
 
     def __init__(self, path: Path, parsed: mutagen.FileType):
         super().__init__(path)
@@ -192,15 +232,19 @@ class VorbisFile(AudioFile):
         )
 
     def read_artwork(self) -> Artwork | None:
-        pictures = getattr(self._file, "pictures", None)
-        if not pictures:
+        picture = _best_picture(list(getattr(self._file, "pictures", []) or []))
+        if picture is None:
+            picture = _best_picture(self._encoded_pictures())
+        if picture is None:
             return None
-        return Artwork(data=pictures[0].data, mime=pictures[0].mime or "image/jpeg")
+        return Artwork(data=picture.data, mime=picture.mime or "image/jpeg")
 
     def rewrite(self, core: CoreTags, artwork: Artwork | None) -> None:
         if isinstance(self._file, FLAC):
             self._file.clear_pictures()
-        self._file.delete()
+        if self._file.tags is None:
+            self._file.add_tags()
+        self._file.tags.clear()
         self._file["TITLE"] = core.title
         if core.artist:
             self._file["ARTIST"] = core.artist
@@ -210,7 +254,8 @@ class VorbisFile(AudioFile):
             self._file["DATE"] = str(core.year)
         if artwork is not None:
             self._attach(artwork)
-        self._file.save()
+        with _wrap_errors(self.path):
+            self._file.save()
 
     def write_classification(self, tags: ClassificationTags) -> None:
         self._file[LANGUAGE_KEY] = tags.language
@@ -221,20 +266,29 @@ class VorbisFile(AudioFile):
         self._file[DECADE_KEY] = tags.decade
         if tags.duration:
             self._file[DURATION_KEY] = tags.duration
-        self._file.save()
+        with _wrap_errors(self.path):
+            self._file.save()
+
+    def _encoded_pictures(self) -> list:
+        pictures = []
+        for encoded in self._file.get(VORBIS_PICTURE_KEY, []) or []:
+            try:
+                pictures.append(Picture(base64.b64decode(encoded)))
+            except (ValueError, TypeError, mutagen.MutagenError):
+                log.warning("unreadable embedded picture in %s", self.path)
+        return pictures
 
     def _attach(self, artwork: Artwork) -> None:
-        if not isinstance(self._file, FLAC):
-            log.warning(
-                "cover art dropped for %s: only FLAC carries picture blocks here",
-                self.path,
-            )
-            return
         picture = Picture()
         picture.data = artwork.data
         picture.mime = artwork.mime
-        picture.type = 3
-        self._file.add_picture(picture)
+        picture.type = FRONT_COVER
+        if isinstance(self._file, FLAC):
+            self._file.add_picture(picture)
+            return
+        self._file[VORBIS_PICTURE_KEY] = [
+            base64.b64encode(picture.write()).decode("ascii")
+        ]
 
     def _first(self, key: str) -> str | None:
         values = self._file.get(key)
@@ -275,7 +329,9 @@ class Mp4File(AudioFile):
         return Artwork(data=bytes(cover), mime=mime)
 
     def rewrite(self, core: CoreTags, artwork: Artwork | None) -> None:
-        self._file.delete()
+        if self._file.tags is None:
+            self._file.add_tags()
+        self._file.tags.clear()
         self._file["\xa9nam"] = [core.title]
         if core.artist:
             self._file["\xa9ART"] = [core.artist]
@@ -286,17 +342,20 @@ class Mp4File(AudioFile):
         if artwork is not None:
             image_format = MP4_COVER_FORMATS.get(artwork.mime, MP4Cover.FORMAT_JPEG)
             self._file["covr"] = [MP4Cover(artwork.data, imageformat=image_format)]
-        self._file.save()
+        with _wrap_errors(self.path):
+            self._file.save()
 
     def write_classification(self, tags: ClassificationTags) -> None:
-        self._file["\xa9gen"] = [tags.genre]
+        if tags.genre:
+            self._file["\xa9gen"] = [tags.genre]
         self._set_freeform(LANGUAGE_KEY, tags.language)
         if tags.mood:
             self._set_freeform(MOOD_KEY, tags.mood)
         self._set_freeform(DECADE_KEY, tags.decade)
         if tags.duration:
             self._set_freeform(DURATION_KEY, tags.duration)
-        self._file.save()
+        with _wrap_errors(self.path):
+            self._file.save()
 
     def _set_freeform(self, key: str, value: str) -> None:
         atom = f"{self.FREEFORM_PREFIX}{key}"
@@ -321,15 +380,13 @@ def open_audio(path: Path) -> AudioFile:
     """
     suffix = path.suffix.lower()
     if suffix not in AUDIO_EXTENSIONS:
-        raise UnsupportedContainer(f"{path!r} has no adapter for {suffix!r}")
+        raise UnsupportedContainer(f"{str(path)!r} has no adapter for {suffix!r}")
     if suffix == ".mp3":
         return Mp3File(path)
-    try:
+    with _wrap_errors(path):
         parsed = mutagen.File(path)
-    except mutagen.MutagenError as exc:
-        raise UnreadableAudio(f"{path!r} could not be parsed by mutagen") from exc
     if parsed is None:
-        raise UnreadableAudio(f"{path!r} was not recognised as audio")
+        raise UnreadableAudio(f"{str(path)!r} was not recognised as audio")
     if isinstance(parsed, MP4):
         return Mp4File(path, parsed)
     return VorbisFile(path, parsed)

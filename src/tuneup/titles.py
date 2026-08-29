@@ -9,17 +9,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .artists import normalise_key, split_credits
+from .artists import normalise_key, normalise_words, split_credits
 
 log = logging.getLogger(__name__)
 
 SITE_TAG = re.compile(
-    r"[\[\(\{]\s*(?:www\.)?[\w-]+\.(?:com|net|org|info|biz|vn|me|tv|co)\b[^\]\)\}]*"
+    r"[\[\(\{]\s*(?:www\.)?(?:[\w-]+\.)+(?:com|net|org|info|biz|vn|me|tv|co)\b"
+    r"[^\]\)\}]*"
     r"[\]\)\}]",
     re.IGNORECASE,
 )
 BARE_SITE = re.compile(
-    r"\b(?:www\.)[\w-]+\.(?:com|net|org|info|biz|vn|me|tv|co)\b",
+    r"\b(?:www\.)?(?:[\w-]+\.)+(?:com|net|org|info|biz|vn|me|tv|co)\b",
     re.IGNORECASE,
 )
 JUNK_BRACKET = re.compile(
@@ -36,8 +37,9 @@ BARE_JUNK_PHRASE = re.compile(
     r"|\blyrics?\s*video\b|\bm/v\b|\bofficial\s*trailer\b",
     re.IGNORECASE,
 )
-EMPTY_BRACKET = re.compile(r"[\[\(\{]\s*[\]\)\}]")
-TRAILING_OFFICIAL = re.compile(r"[\s\-|l]+official\s*$", re.IGNORECASE)
+EMPTY_BRACKET = re.compile(r"[\[\(\{][\s\-–—_.,]*[\]\)\}]")
+BRACKET_PADDING = re.compile(r"([\[\(\{])\s+|\s+([\]\)\}])")
+TRAILING_OFFICIAL = re.compile(r"[\s\-|]+official\s*$", re.IGNORECASE)
 LEADING_TRACK_NUMBER = re.compile(r"^\s*(?:#\d{1,3}\s+|\d{1,3}\s*[.)\-_]\s*)(?=\D)")
 SEPARATORS = re.compile(r"[_]+")
 CJK_BRACKETS = re.compile(r"[「」『』【】〈〉《》]")
@@ -83,17 +85,16 @@ class TitleChoice:
     split_trusted: bool = True
 
 
-def prettify(text: str) -> str:
+def prettify(text: str, is_filename: bool = False) -> str:
     """Return ``text`` with site tags, junk brackets and separator noise removed.
 
-    Separators are normalised before the junk patterns run, so bracketed noise
-    written with underscores is still recognised. A leading bracketed tag is
-    dropped, since in a downloaded filename that slot holds a source or scene
-    label rather than part of the title, and anything after a vertical bar is
-    dropped too, which is where a video download puts the album or channel.
+    ``is_filename`` enables the rules that only make sense for a download
+    filename: a leading bracketed scene tag is dropped, but only when the stem
+    also has a dash separator, so an album or song that genuinely opens with a
+    parenthetical -- ``(I Can't Get No) Satisfaction`` -- keeps it.
 
-    A leading track number is only stripped when a separator or a hash marks
-    it as one and a non-digit follows, so ``500 Miles`` and ``1.21 Gigawatts``
+    A leading track number is only stripped when a separator or a hash marks it
+    as one and a non-digit follows, so ``500 Miles`` and ``1.21 Gigawatts``
     survive while ``16.Sky Over Tokyo`` loses its index.
 
     CJK quotation brackets are flattened to spaces, since a Japanese or Chinese
@@ -101,10 +102,8 @@ def prettify(text: str) -> str:
 
     Production labels are removed whether or not they are bracketed, but only
     as whole phrases: ``Official`` followed within two words by a medium word
-    such as ``Video`` or ``Visualizer``. A bare ``Video`` or ``Audio`` is left
-    alone, because ``Video Games`` is a song, and
-    ``The Official Song of the 2006 FIFA World Cup`` survives because no medium
-    word follows in range.
+    such as ``Video``. A bare ``Video`` or ``Audio`` is left alone, because
+    ``Video Games`` is a song.
 
     Casing is left alone here. It is decided by the caller, which knows whether
     the text is a title or an artist name, and those want different rules.
@@ -113,15 +112,31 @@ def prettify(text: str) -> str:
     cleaned = CJK_BRACKETS.sub(" ", cleaned)
     cleaned = _before_pipe(cleaned)
     cleaned = SITE_TAG.sub(" ", cleaned)
-    cleaned = LEADING_BRACKET_TAG.sub("", cleaned)
     cleaned = BARE_SITE.sub(" ", cleaned)
+    cleaned = LEADING_TRACK_NUMBER.sub("", cleaned)
+    if is_filename and ARTIST_TITLE_SPLIT.search(cleaned):
+        cleaned = LEADING_BRACKET_TAG.sub("", cleaned)
+        cleaned = LEADING_TRACK_NUMBER.sub("", cleaned)
     cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = BITRATE.sub(" ", cleaned)
     cleaned = BARE_JUNK_PHRASE.sub(" ", cleaned)
+    cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = EMPTY_BRACKET.sub(" ", cleaned)
     cleaned = TRAILING_OFFICIAL.sub("", cleaned)
-    cleaned = LEADING_TRACK_NUMBER.sub("", cleaned)
     cleaned = MULTI_SPACE.sub(" ", cleaned)
+    return EDGE_JUNK.sub("", cleaned)
+
+
+def without_junk(text: str) -> str:
+    """Return ``text`` with production words removed and the wreckage tidied.
+
+    Used to rescue a half of a filename that carries a marker such as
+    ``(Acoustic Cover)``: the marker goes, the song name stays.
+    """
+    cleaned = ARTIST_JUNK.sub(" ", text)
+    cleaned = EMPTY_BRACKET.sub(" ", cleaned)
+    cleaned = MULTI_SPACE.sub(" ", cleaned)
+    cleaned = BRACKET_PADDING.sub(lambda m: m.group(1) or m.group(2), cleaned)
     return EDGE_JUNK.sub("", cleaned)
 
 
@@ -195,7 +210,7 @@ def trim_trailing_credits(title: str, pool: dict[str, int]) -> str:
 
 def split_halves(path: Path) -> tuple[str, str] | None:
     """Return the two halves of a dashed stem, or None when it has no dash."""
-    parts = ARTIST_TITLE_SPLIT.split(prettify(path.stem), maxsplit=1)
+    parts = ARTIST_TITLE_SPLIT.split(prettify(path.stem, is_filename=True), maxsplit=1)
     if len(parts) != 2:
         return None
     return parts[0].strip(), parts[1].strip()
@@ -244,36 +259,32 @@ def _decide_from_filename(
     Guest`` are common; it only decides when nothing better has.
     """
     pool = artist_pool or {}
-    stem = prettify(path.stem)
+    stem = prettify(path.stem, is_filename=True)
     halves = split_halves(path)
     if halves is None:
         return TitleChoice(title=stem, source="filename", artist_hint=None)
     left, right = halves
-    if known_artist and _names_match(right, known_artist):
-        return TitleChoice(
-            title=left,
-            source="filename",
-            artist_hint=right,
-            artist_confirmed=True,
-        )
-    if known_artist and _names_match(left, known_artist):
-        return TitleChoice(
-            title=right,
-            source="filename",
-            artist_hint=left,
-            artist_confirmed=True,
-        )
-    left_junk = ARTIST_JUNK.search(left) is not None
-    right_junk = ARTIST_JUNK.search(right) is not None
-    if left_junk and not right_junk:
-        inner = ARTIST_TITLE_SPLIT.split(right, maxsplit=1)
-        if len(inner) == 2:
-            left, right = inner[0].strip(), inner[1].strip()
-            left_junk = ARTIST_JUNK.search(left) is not None
-            right_junk = ARTIST_JUNK.search(right) is not None
-        else:
-            return TitleChoice(title=right, source="filename", artist_hint=None)
-    if right_junk and not left_junk:
+    if known_artist:
+        right_match = _names_match(right, known_artist)
+        left_match = _names_match(left, known_artist)
+        if right_match and not left_match:
+            return TitleChoice(
+                title=left,
+                source="filename",
+                artist_hint=right,
+                artist_confirmed=right_match == "exact",
+            )
+        if left_match and not right_match:
+            return TitleChoice(
+                title=right,
+                source="filename",
+                artist_hint=left,
+                artist_confirmed=left_match == "exact",
+            )
+    left, right, dropped = _resolve_junk(left, right)
+    if dropped == "left":
+        return TitleChoice(title=right, source="filename", artist_hint=None)
+    if dropped == "right":
         return TitleChoice(title=left, source="filename", artist_hint=None)
     left_score = artist_evidence(left, pool)
     right_score = artist_evidence(right, pool)
@@ -307,13 +318,10 @@ def choose(
     """
     pool = artist_pool or {}
     from_name = from_filename(path, known_artist, pool)
-    if not from_name.split_trusted and is_usable(embedded):
+    from_metadata = normalise_case(prettify(embedded)) if embedded else ""
+    if not from_name.split_trusted and is_usable(from_metadata):
         log.debug("stem of %s is not an artist-title pair, using metadata", path)
-        return TitleChoice(
-            title=normalise_case(prettify(embedded)),
-            source="metadata",
-            artist_hint=None,
-        )
+        return TitleChoice(title=from_metadata, source="metadata", artist_hint=None)
     if is_usable(from_name.title):
         trimmed = normalise_case(trim_trailing_credits(from_name.title, pool))
         if trimmed == from_name.title:
@@ -325,13 +333,9 @@ def choose(
             artist_confirmed=from_name.artist_confirmed,
             split_trusted=from_name.split_trusted,
         )
-    if is_usable(embedded):
+    if is_usable(from_metadata):
         log.debug("falling back to embedded title for %s", path)
-        return TitleChoice(
-            title=normalise_case(prettify(embedded)),
-            source="metadata",
-            artist_hint=None,
-        )
+        return TitleChoice(title=from_metadata, source="metadata", artist_hint=None)
     log.warning("no usable title for %s, keeping raw stem", path)
     return TitleChoice(title=path.stem, source="stem", artist_hint=None)
 
@@ -378,22 +382,44 @@ def _capitalise(word: str) -> str:
     return lowered
 
 
-def _names_match(half: str, known_artist: str) -> bool:
-    """Return whether ``known_artist`` refers to the same act as ``half``.
+def _resolve_junk(left: str, right: str) -> tuple[str, str, str | None]:
+    """Strip production markers from a dashed stem's halves.
 
-    Exact match first, then credit membership, then containment: a file tagged
-    ``GIMS`` should still confirm the half ``Maitre Gims``. Containment needs
-    four characters to fire, so a two-letter stage name cannot latch onto an
-    unrelated word.
+    A half is only discarded when nothing survives the strip. ``Photograph
+    (Acoustic Cover)`` keeps its song name and stays the title, while a half
+    that is nothing but ``Lyric video`` is dropped so the other half wins.
+    """
+    left_junk = ARTIST_JUNK.search(left) is not None
+    right_junk = ARTIST_JUNK.search(right) is not None
+    if left_junk and not right_junk:
+        cleaned = without_junk(left)
+        return (cleaned, right, None) if is_usable(cleaned) else (left, right, "left")
+    if right_junk and not left_junk:
+        cleaned = without_junk(right)
+        return (left, cleaned, None) if is_usable(cleaned) else (left, right, "right")
+    return left, right, None
+
+
+def _names_match(half: str, known_artist: str) -> str | None:
+    """Return how ``known_artist`` matches ``half``: exact, loose, or not.
+
+    ``exact`` covers an identical name or one named in the half's credit list.
+    ``loose`` covers whole-word containment -- a file tagged ``GIMS`` against
+    the half ``Maitre Gims``. Matching on word boundaries is what stops ``Rain``
+    from matching ``Brain Damage``; it is still reported separately because the
+    caller must not record a loose match as confirmed.
     """
     half_key = normalise_key(half)
     known_key = normalise_key(known_artist)
     if not half_key or not known_key:
-        return False
+        return None
     if half_key == known_key:
-        return True
+        return "exact"
     if known_key in {normalise_key(part) for part in split_credits(half)}:
-        return True
-    if len(known_key) >= MIN_CONTAINMENT_LENGTH and known_key in half_key:
-        return True
-    return len(half_key) >= MIN_CONTAINMENT_LENGTH and half_key in known_key
+        return "exact"
+    half_words = f" {normalise_words(half)} "
+    known_words = f" {normalise_words(known_artist)} "
+    if len(known_key) >= MIN_CONTAINMENT_LENGTH and known_words.strip():
+        if known_words in half_words or half_words in known_words:
+            return "loose"
+    return None

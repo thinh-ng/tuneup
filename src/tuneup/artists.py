@@ -22,8 +22,9 @@ KEY_SEPARATOR = re.compile(r"[_\.\-]+")
 DISPLAY_SEPARATOR = re.compile(r"[_]+")
 NON_ALNUM = re.compile(r"[^\w\s]", re.UNICODE)
 MULTI_SPACE = re.compile(r"\s{2,}")
+TRAILING_SYMBOL = re.compile(r"\s+[^\w\s]+$", re.UNICODE)
 CREDIT_SPLIT = re.compile(
-    r"\s*(?:,|&|\+|\bx\b|\bvs\.?\b|\bfeat\.)\s*",
+    r"\s*(?:,|&|\+|\bvs\.?\b|\bfeat\.)\s*|(?<=\s)[x×](?=\s)",
     re.IGNORECASE,
 )
 
@@ -47,17 +48,37 @@ def normalise_key(name: str) -> str:
     return "".join(stripped.split()).casefold()
 
 
+def normalise_words(name: str) -> str:
+    """Return the match key for ``name`` with word boundaries preserved.
+
+    Same folding as :func:`normalise_key` but keeping single spaces, so a
+    caller can test whether one name contains another as whole words rather
+    than as an accidental substring.
+    """
+    text = FEATURE_MARKER.sub(" feat ", name)
+    text = KEY_SEPARATOR.sub(" ", text)
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    stripped = stripped.replace("đ", "d").replace("Đ", "D")
+    stripped = NON_ALNUM.sub(" ", stripped)
+    return " ".join(stripped.split()).casefold()
+
+
 def tidy(name: str) -> str:
     """Return ``name`` with separators and featuring markers normalised.
 
     Unlike :func:`normalise_key` this keeps diacritics, case and hyphens,
     because the result is what gets written back to the file and a hyphen is
     part of names such as ``Son Tung M-TP`` and ``Jay-Z``.
+
+    A dangling symbol is dropped, so ``Metallica !`` does not outrank
+    ``Metallica`` as the canonical spelling. A symbol attached to a word --
+    ``Boney M.`` -- is part of the name and stays.
     """
     text = DISPLAY_SEPARATOR.sub(" ", name)
     text = FEATURE_MARKER.sub("feat.", text)
     text = MULTI_SPACE.sub(" ", text)
-    return text.strip()
+    return TRAILING_SYMBOL.sub("", text).strip()
 
 
 def readability_score(name: str) -> tuple[int, int, int, int]:
@@ -109,8 +130,12 @@ def split_credits(name: str) -> list[str]:
     ``Nguyen Hai Phong, Pmar`` and ``Phao x Masew`` each name two artists. A
     library that credits one of them alone elsewhere is evidence about both,
     which is what lets a one-off filename still be read correctly.
+
+    The name is tidied first so that ``ft.`` and ``featuring`` split the same
+    way ``feat.`` does. ``x`` only separates when it stands alone between
+    spaces, so ``X Japan`` and ``Malcolm X`` stay whole.
     """
-    parts = [part.strip() for part in CREDIT_SPLIT.split(name)]
+    parts = [part.strip() for part in CREDIT_SPLIT.split(tidy(name))]
     return [part for part in parts if part]
 
 

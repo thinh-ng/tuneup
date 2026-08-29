@@ -24,7 +24,8 @@ from .config import (
     duration_bucket,
     sidecar_dir,
 )
-from .errors import TuneupError
+from .errors import HarvestMissing, TuneupError
+from .harvest import HarvestStore
 from .track import ClassificationTags, SourceTags, preferred_year
 
 log = logging.getLogger(__name__)
@@ -180,6 +181,15 @@ def main(argv: list[str] | None = None) -> int:
     if not args.library.is_dir():
         print(f"not a directory: {args.library}", file=sys.stderr)
         return 2
+
+    try:
+        HarvestStore(args.library).load()
+    except HarvestMissing:
+        log.warning(
+            "no sanitizer snapshot for %s: titles and artists may still be the "
+            "ones the auto-tagger wrote, which will skew Language",
+            args.library,
+        )
 
     paths = iter_audio_files(args.library)
     if args.limit is not None:

@@ -1,7 +1,8 @@
 """Constants and pure resolution functions for both tuneup pipelines.
 
 Holds no state and performs no I/O beyond reading environment variables.
-Edit ``GENRES`` and ``DISCOGS_PARENT_TO_GENRE`` to reshape the genre taxonomy;
+Edit ``DISCOGS_PARENT_TO_GENRE`` and ``GENRE_ARTIST_OVERRIDES`` to reshape the
+genre taxonomy; :func:`genres` derives the producible set from them, and
 nothing else in the package hardcodes a genre name.
 """
 
@@ -13,39 +14,21 @@ AUDIO_EXTENSIONS = frozenset({".mp3", ".flac", ".m4a", ".mp4", ".ogg", ".opus"})
 
 SIDECAR_DIR_NAME = ".tuneup"
 HARVEST_FILENAME = "harvest.json"
+HARVEST_CHECKPOINT_EVERY = 25
 ARTIST_MAP_FILENAME = "artists.json"
 REPORT_FILENAME = "report.json"
 TAGS_FILENAME = "tags.json"
 
+DEFAULT_LANGUAGE = "English"
 LANGUAGES = (
     "Vietnamese",
-    "English",
     "Chinese",
     "Korean",
     "Japanese",
     "Instrumental",
-    "Other",
+    DEFAULT_LANGUAGE,
 )
-DEFAULT_LANGUAGE = "English"
 
-GENRES = (
-    "Pop",
-    "Rock",
-    "Ballad",
-    "Bolero",
-    "Nhạc Trữ Tình",
-    "Country",
-    "Electronic",
-    "Hip Hop",
-    "R&B",
-    "Jazz",
-    "Blues",
-    "Classical",
-    "Folk",
-    "Latin",
-    "Soundtrack",
-    "Other",
-)
 DEFAULT_GENRE = "Other"
 
 DISCOGS_PARENT_TO_GENRE = {
@@ -67,6 +50,27 @@ DISCOGS_PARENT_TO_GENRE = {
 }
 
 GENRE_ARTIST_OVERRIDES: dict[str, str] = {}
+
+
+def genres() -> frozenset[str]:
+    """Return every genre this configuration can actually produce.
+
+    Derived from the mappings rather than declared separately, so the two
+    cannot drift: a genre listed but unreachable through
+    ``DISCOGS_PARENT_TO_GENRE`` or ``GENRE_ARTIST_OVERRIDES`` would never be
+    written to a file.
+    """
+    return frozenset(
+        set(DISCOGS_PARENT_TO_GENRE.values())
+        | set(GENRE_ARTIST_OVERRIDES.values())
+        | {DEFAULT_GENRE}
+    )
+
+NON_ARTIST_WORDS = frozenset({
+    "remix", "beat", "karaoke", "acoustic", "live", "demo", "instrumental",
+    "cover", "lyrics", "lyric", "audio", "video", "official", "ost", "mix",
+    "extended", "radioedit", "nhac", "vietsub", "engsub", "sub", "fullalbum",
+})
 
 MOODS = ("Happy", "Sad", "Relaxed", "Aggressive", "Party", "Neutral")
 DEFAULT_MOOD = "Neutral"

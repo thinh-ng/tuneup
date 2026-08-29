@@ -38,27 +38,27 @@ class CoverFetcher:
         )
         self._session = requests.Session()
         self._last_request = 0.0
-        self._misses: set[tuple[str, str]] = set()
+        self._cache: dict[tuple[str, str], Artwork | None] = {}
 
     def fetch(self, artist: str | None, album: str | None) -> Artwork | None:
         """Return front cover art for ``album``, or None when nothing is found.
 
-        Albums that miss once are remembered, so a 40-track album costs one
-        lookup rather than forty.
+        Every album is looked up once, hit or miss, so a 40-track album costs
+        one lookup and one download rather than forty of each.
         """
         if not artist or not album:
             return None
         key = (artist.casefold(), album.casefold())
-        if key in self._misses:
-            return None
+        if key in self._cache:
+            return self._cache[key]
         mbid = self._release_group_id(artist, album)
-        if mbid is None:
-            self._misses.add(key)
-            return None
-        artwork = self._download(mbid)
-        if artwork is None:
-            self._misses.add(key)
+        artwork = self._download(mbid) if mbid else None
+        self._cache[key] = artwork
         return artwork
+
+    def close(self) -> None:
+        """Release the pooled HTTP connections."""
+        self._session.close()
 
     def _release_group_id(self, artist: str, album: str) -> str | None:
         self._wait_turn()
