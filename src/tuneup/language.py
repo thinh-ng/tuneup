@@ -72,8 +72,16 @@ def detect(text: str | None) -> str | None:
 
 
 def detect_track(title: str | None, artist: str | None) -> str | None:
-    """Return the language implied by a track's title, falling back to artist."""
-    return detect(title) or detect(artist)
+    """Return the language implied by a track's title and artist together.
+
+    The two are tested as one string rather than title-then-artist, because
+    Japanese writes with kanji as well as kana: an all-kanji title such as
+    ``春泥棒`` looks like Chinese on its own, and only the katakana in the
+    artist name ``ヨルシカ`` settles it. Testing the title first would lock in
+    the wrong answer before the deciding evidence is read.
+    """
+    combined = " ".join(part for part in (title, artist) if part)
+    return detect(combined) or None
 
 
 def _performers(credit: str | None) -> list[str]:

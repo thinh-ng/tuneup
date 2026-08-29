@@ -177,13 +177,21 @@ class Analyzer:
             raise UnreadableAudio(f"{str(path)!r}: {exc}") from exc
 
     def _predict_genre(self, embeddings) -> str:
+        """Return the genre whose strongest style scored highest.
+
+        The parent is scored by its single best style, not by the sum of its
+        styles. Discogs' 400 labels are distributed very unevenly -- Electronic
+        has 106 and Rock 91, while Pop has 16 and Stage & Screen 4 -- so a sum
+        rewards a parent for being large rather than for being right, and puts
+        most of a library into those two buckets.
+        """
         averaged = self._numpy.mean(self._genre(embeddings), axis=0)
-        totals: dict[str, float] = {}
+        strongest: dict[str, float] = {}
         for label, score in zip(self._genre_labels, averaged, strict=True):
             parent = label.split(DISCOGS_LABEL_SEPARATOR)[0]
-            totals[parent] = totals.get(parent, 0.0) + float(score)
-        best_parent = max(totals, key=totals.get)
-        if not totals[best_parent] >= GENRE_CONFIDENCE:
+            strongest[parent] = max(strongest.get(parent, 0.0), float(score))
+        best_parent = max(strongest, key=strongest.get)
+        if not strongest[best_parent] >= GENRE_CONFIDENCE:
             return DEFAULT_GENRE
         return DISCOGS_PARENT_TO_GENRE.get(best_parent, DEFAULT_GENRE)
 
