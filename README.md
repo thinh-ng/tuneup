@@ -95,3 +95,23 @@ Nhạc Trữ Tình), and the confidence thresholds live there.
 `essentia-tensorflow` bundles a full TensorFlow runtime, so the image is ~1.3 GB —
 574 MB of that is TensorFlow, the eight models are 23 MB. Essentia has no Windows
 wheels, which is why the tagger runs in Docker while the sanitizer runs natively.
+
+## Why so many decades are Unknown
+
+A year that is not in the file cannot be recovered reliably. Measured on a
+836-file library where 123 had no year:
+
+```
+Album siblings agree on a year   0 files - the yearless ones have no album either
+Year present in the filename     6 files - 5 are false ("The International 2018")
+MusicBrainz, match verified      2 of 18 sampled, and one of those two was a
+                                 reissue date rather than the original release
+MusicBrainz, unverified          fills 100% - with confident garbage
+```
+
+Searching MusicBrainz by artist and title always returns something, which is how
+an auto-tagger ends up asserting that a 2021 Vietnamese single came out in 2026.
+`fill_album_years` is wired in because it is free and cannot be wrong; text search
+is not, because it can. Audio fingerprinting (AcoustID) identifies a recording
+rather than fuzzy-matching its name and would do better, at the cost of the
+`fpcalc` binary and an API key.

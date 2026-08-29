@@ -8,8 +8,8 @@ import argparse
 import json
 import logging
 import sys
-from collections import Counter
-from dataclasses import asdict, dataclass
+from collections import Counter, defaultdict
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import artists, titles
@@ -151,11 +151,44 @@ def plan(
                     year=core.year,
                     title_source=choice.source,
                     artist_source=artist_source,
+                    year_source="file" if core.year is not None else "none",
                     looks_like_reissue=looks_like_reissue(tags),
                 ),
             )
         )
     return changes
+
+
+def fill_album_years(changes: list[PlannedChange]) -> int:
+    """Give a yearless track the year its album siblings agree on.
+
+    A year is a property of a release, so a track missing one can borrow from
+    the rest of its album. Only an album whose known years all agree is used --
+    a compilation spanning decades supplies nothing, because there is no single
+    right answer to copy.
+    """
+    years: dict[str, set[int]] = defaultdict(set)
+    for change in changes:
+        if change.core.album and change.core.year is not None:
+            years[change.core.album.casefold()].add(change.core.year)
+
+    filled = 0
+    for index, change in enumerate(changes):
+        if change.core.year is not None or not change.core.album:
+            continue
+        known = years.get(change.core.album.casefold(), set())
+        if len(known) != 1:
+            continue
+        year = next(iter(known))
+        changes[index] = replace(
+            change,
+            core=replace(change.core, year=year),
+            outcome=replace(change.outcome, year=year, year_source="album"),
+        )
+        filled += 1
+    if filled:
+        log.info("filled %d years from album siblings", filled)
+    return filled
 
 
 def apply_changes(
@@ -252,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     pool = build_artist_pool(sources)
     artist_map = artists.build_map(collect_artist_names(sources, pool))
     changes = plan(sources, artist_map, pool)
+    fill_album_years(changes)
     write_reports(args.library, changes, artist_map)
 
     if not args.apply:

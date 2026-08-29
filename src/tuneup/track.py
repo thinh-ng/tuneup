@@ -70,6 +70,7 @@ class SanitizeOutcome:
     year: int | None
     title_source: str
     artist_source: str
+    year_source: str
     looks_like_reissue: bool
 
 
