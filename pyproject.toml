@@ -1,0 +1,31 @@
+[project]
+name = "tuneup"
+version = "0.1.0"
+description = "Repair and tag a personal music library deterministically."
+requires-python = ">=3.11"
+dependencies = [
+    "mutagen>=1.47.0",
+    "musicbrainzngs>=0.7.1",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "essentia-tensorflow>=2.1b6.dev1110",
+    "numpy>=1.24.0",
+]
+
+[project.scripts]
+tuneup-sanitize = "tuneup.sanitize:main"
+tuneup-tag = "tuneup.tag:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

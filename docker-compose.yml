@@ -1,0 +1,11 @@
+services:
+  tuneup:
+    build: .
+    image: tuneup:latest
+    volumes:
+      - ${TUNEUP_LIBRARY:-./library}:/library
+    environment:
+      TUNEUP_MODEL_DIR: /models
+      TUNEUP_MB_CONTACT: ${TUNEUP_MB_CONTACT:-}
+    entrypoint: ["tuneup-tag"]
+    command: ["/library"]
