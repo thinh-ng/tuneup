@@ -66,6 +66,17 @@ def genres() -> frozenset[str]:
         | {DEFAULT_GENRE}
     )
 
+LANGUAGE_ARTIST_OVERRIDES: dict[str, str] = {}
+
+COUNTRY_LANGUAGE = {
+    "VN": "Vietnamese",
+    "KR": "Korean",
+    "JP": "Japanese",
+    "CN": "Chinese",
+    "TW": "Chinese",
+    "HK": "Chinese",
+}
+
 NON_ARTIST_WORDS = frozenset({
     "remix", "beat", "karaoke", "acoustic", "live", "demo", "instrumental",
     "cover", "lyrics", "lyric", "audio", "video", "official", "ost", "mix",

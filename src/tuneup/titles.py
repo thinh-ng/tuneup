@@ -37,6 +37,12 @@ BARE_JUNK_PHRASE = re.compile(
     r"|\blyrics?\s*video\b|\bm/v\b|\bofficial\s*trailer\b",
     re.IGNORECASE,
 )
+SUBTITLE_MARKER = re.compile(
+    r"\b(?:legendado(?:\s*pt[\s-]*br)?|legenda|vietsub(?:\s+by\s+[\w.]+)?"
+    r"|engsub|hardsub|subtitulad\w*|sub\s*espa\w*"
+    r"|letra\s*&?\s*traducci[oó]n|tradu[çc][ãa]o|traduzione)\b",
+    re.IGNORECASE,
+)
 EMPTY_BRACKET = re.compile(r"[\[\(\{][\s\-–—_.,]*[\]\)\}]")
 BRACKET_PADDING = re.compile(r"([\[\(\{])\s+|\s+([\]\)\}])")
 TRAILING_OFFICIAL = re.compile(r"[\s\-|]+official\s*$", re.IGNORECASE)
@@ -105,6 +111,10 @@ def prettify(text: str, is_filename: bool = False) -> str:
     such as ``Video``. A bare ``Video`` or ``Audio`` is left alone, because
     ``Video Games`` is a song.
 
+    Subtitle and translation markers go too -- ``Legendado``, ``Vietsub``,
+    ``Letra & Traducción``. They describe an upload, not the recording, and
+    they are frequently in a language the song is not sung in.
+
     Casing is left alone here. It is decided by the caller, which knows whether
     the text is a title or an artist name, and those want different rules.
     """
@@ -120,6 +130,7 @@ def prettify(text: str, is_filename: bool = False) -> str:
     cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = BITRATE.sub(" ", cleaned)
     cleaned = BARE_JUNK_PHRASE.sub(" ", cleaned)
+    cleaned = SUBTITLE_MARKER.sub(" ", cleaned)
     cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = EMPTY_BRACKET.sub(" ", cleaned)
     cleaned = TRAILING_OFFICIAL.sub("", cleaned)

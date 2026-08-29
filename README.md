@@ -131,3 +131,31 @@ recording from the audio rather than guessing from its name. It needs the
 
 Many of the 123 have no release year in existence -- they are uploads that were
 never commercially released. `Unknown` is the true answer for those.
+
+## How a language is decided
+
+Three sources, strongest first. A weaker one only fills what the stronger ones
+left empty, and never overrides them.
+
+```
+1. Script and diacritics in the title   decisive, never wrong
+2. Other tracks by the same performers  strong; evidence is gathered per
+                                        performer, so a track credited to four
+                                        rappers inherits from any of them
+3. The artist's country (--lookup-languages)   weak, opt-in
+```
+
+Step 3 exists for the case the other two cannot reach: a Vietnamese song with an
+English title, by artists whose every other track in the library is also
+English-titled. It reads the artist's country from MusicBrainz and maps VN, KR,
+JP, CN, TW and HK to a language.
+
+Artist search is fuzzy, so the returned name must match exactly before its
+country is believed: searching `Lil Wuyn` returns `Lil Wayne` first with a
+perfect score, and accepting that would file a Vietnamese rap cypher as
+American. Each performer in a credit is looked up separately, since a credit
+naming four artists matches no single entry.
+
+Know what step 3 asserts: an English-language song by a Vietnamese artist will
+be tagged Vietnamese. That is a judgement about the artist, not the recording.
+Leave the flag off if you want the language of the words being sung.

@@ -26,6 +26,7 @@ from .config import (
 )
 from .errors import HarvestMissing, TuneupError
 from .harvest import HarvestStore
+from .origins import ArtistOrigin
 from .track import ClassificationTags, SourceTags, preferred_year
 
 log = logging.getLogger(__name__)
@@ -58,14 +59,32 @@ def read_library(paths: list[Path]) -> dict[Path, SourceTags]:
     return sources
 
 
-def resolve_languages(sources: dict[Path, SourceTags]) -> dict[Path, str | None]:
-    """Detect a language per track, then fill gaps from each artist's other tracks."""
+def resolve_languages(
+    sources: dict[Path, SourceTags], origin: ArtistOrigin | None = None
+) -> dict[Path, str | None]:
+    """Detect a language per track, then fill the gaps from weaker evidence.
+
+    Script and diacritics first, then the other tracks by the same performers,
+    and finally -- only when ``origin`` is given -- the artist's country. Each
+    step is weaker than the one before, so a later one never overrides an
+    earlier one.
+    """
     detected = {
         str(path): language.detect_track(tags.title, tags.artist)
         for path, tags in sources.items()
     }
     artist_by_key = {str(path): tags.artist for path, tags in sources.items()}
     resolved = language.propagate_by_artist(detected, artist_by_key)
+    if origin is not None:
+        filled = 0
+        for key, value in resolved.items():
+            if value is not None:
+                continue
+            found = origin.language_for(artist_by_key.get(key))
+            if found:
+                resolved[key] = found
+                filled += 1
+        log.info("resolved %d languages from the artist's country", filled)
     return {path: resolved[str(path)] for path in sources}
 
 
@@ -168,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
         help="skip Essentia, producing language, decade and duration only",
     )
     parser.add_argument(
+        "--lookup-languages",
+        action="store_true",
+        help="ask MusicBrainz for the country of artists whose language is "
+        "still unknown; paces at one request per second",
+    )
+    parser.add_argument(
         "--limit", type=int, help="process only the first N files, for a trial run"
     )
     parser.add_argument("--verbose", action="store_true", help="log at debug level")
@@ -200,7 +225,8 @@ def main(argv: list[str] | None = None) -> int:
     log.info("tagging %d audio files", len(paths))
 
     sources = read_library(paths)
-    languages = resolve_languages(sources)
+    origin = ArtistOrigin() if args.lookup_languages else None
+    languages = resolve_languages(sources, origin)
 
     analyzer = None
     if not args.no_audio:

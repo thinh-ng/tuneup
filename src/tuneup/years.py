@@ -1,20 +1,20 @@
 """Opt-in recovery of a missing release year from MusicBrainz.
 
-Off by default, because a text search against MusicBrainz always returns
-something. Searching for a track it has never heard of still yields a
-confident-looking recording, and accepting that is how a library ends up
-asserting a 2021 Vietnamese single was released in 2026 -- exactly the damage
-this project exists to undo.
+A naive search cannot do this. MusicBrainz models a *recording* as one recorded
+performance, so a song has many: the studio take, a live version, a remaster,
+whatever a compilation used. Search ranks them by text similarity, which has
+nothing to do with which came first, and the search response carries only a
+partial release list with no first-release date. Taking the top hit therefore
+dates ``Piano Man`` to 1984 and Daft Punk's ``Beyond`` to 2023.
 
-Every candidate therefore has to survive three checks before its year is used:
-a search score, the recording title matching once bracketed suffixes are set
-aside, and the credited artist matching the one on the file. Measured on a
-library of 836 files, that turns "a year for all of them, many wrong" into a
-year for roughly a quarter of them, most of which are right.
+So this asks a different question. Every candidate recording whose title and
+artist check out is examined, each one's *complete* release list is browsed, the
+releases are narrowed to studio albums, singles and EPs, and the earliest year
+across all of them wins. The original release is in there somewhere; it is just
+rarely the first result.
 
-The remaining error is a reissue date: MusicBrainz knows when a recording was
-first released, but a recording entry for a later remaster carries the later
-date, and nothing in the metadata distinguishes them.
+That costs one search plus a browse per candidate -- around ten requests a
+track, paced at one per second. It is off by default and worth running once.
 """
 
 import logging
@@ -36,7 +36,12 @@ from .musicbrainz import RateLimiter
 log = logging.getLogger(__name__)
 
 REQUEST_INTERVAL_SECONDS = 1.0
-SEARCH_LIMIT = 5
+SEARCH_LIMIT = 8
+RELEASE_LIMIT = 100
+STUDIO_TYPES = frozenset({"Album", "Single", "EP"})
+NOT_ORIGINAL = frozenset(
+    {"Compilation", "Live", "Remix", "DJ-mix", "Interview", "Demo", "Mixtape/Street"}
+)
 BRACKETED = re.compile(r"[\[\(\{][^\]\)\}]*[\]\)\}]")
 NON_ALNUM = re.compile(r"[^\w]", re.UNICODE)
 LEADING_YEAR = re.compile(r"^(\d{4})")
@@ -52,7 +57,7 @@ def _core(text: str | None) -> str:
 
 
 class YearLookup:
-    """Finds a first-release year for a track, or returns None rather than guess."""
+    """Finds the earliest studio release year for a track, or None."""
 
     def __init__(self, contact: str = MUSICBRAINZ_CONTACT):
         musicbrainzngs.set_useragent(
@@ -62,39 +67,70 @@ class YearLookup:
         self._cache: dict[tuple[str, str], int | None] = {}
 
     def find(self, artist: str | None, title: str | None) -> int | None:
-        """Return the earliest plausible release year, or None when unsure.
+        """Return the earliest plausible studio-release year, or None.
 
-        None is returned for anything that fails a check. A wrong year files a
-        song under the wrong decade silently, whereas an absent one is visible
-        as Unknown, so refusing to answer is the safer failure.
+        None means no candidate survived verification. A wrong year files a
+        song under the wrong decade invisibly, whereas a missing one shows up
+        as Unknown, so declining to answer is the safer failure.
         """
         if not artist or not title:
             return None
         key = (_core(artist), _core(title))
         if not key[0] or not key[1]:
             return None
-        if key in self._cache:
-            return self._cache[key]
-        year = self._search(artist, title)
-        self._cache[key] = year
-        return year
+        if key not in self._cache:
+            self._cache[key] = self._earliest_release(artist, title)
+        return self._cache[key]
 
-    def _search(self, artist: str, title: str) -> int | None:
+    def _earliest_release(self, artist: str, title: str) -> int | None:
+        years: list[int] = []
+        for recording in self._candidates(artist, title):
+            years.extend(self._release_years(recording["id"]))
+        plausible = [
+            year for year in years if MIN_PLAUSIBLE_YEAR <= year <= current_year()
+        ]
+        return min(plausible) if plausible else None
+
+    def _candidates(self, artist: str, title: str) -> list[dict]:
+        """Return the search hits whose title and artist both match the file."""
         self._limiter.wait()
         try:
             result = musicbrainzngs.search_recordings(
                 artist=artist, recording=title, limit=SEARCH_LIMIT
             )
         except musicbrainzngs.MusicBrainzError as exc:
-            log.warning("year lookup failed for %r / %r: %s", artist, title, exc)
-            return None
-        for recording in result.get("recording-list", []):
-            if not self._matches(recording, artist, title):
+            log.warning("year search failed for %r / %r: %s", artist, title, exc)
+            return []
+        return [
+            recording
+            for recording in result.get("recording-list", [])
+            if self._matches(recording, artist, title)
+        ]
+
+    def _release_years(self, recording_id: str) -> list[int]:
+        """Return the years of every studio release carrying this recording."""
+        self._limiter.wait()
+        try:
+            browsed = musicbrainzngs.browse_releases(
+                recording=recording_id,
+                includes=["release-groups"],
+                limit=RELEASE_LIMIT,
+            )
+        except musicbrainzngs.MusicBrainzError as exc:
+            log.debug("release browse failed for %s: %s", recording_id, exc)
+            return []
+        years = []
+        for release in browsed.get("release-list", []):
+            group = release.get("release-group") or {}
+            if group.get("primary-type") not in STUDIO_TYPES:
                 continue
-            year = self._earliest(recording)
-            if year is not None:
-                return year
-        return None
+            if set(group.get("secondary-type-list") or []) & NOT_ORIGINAL:
+                continue
+            stamp = group.get("first-release-date") or release.get("date")
+            match = LEADING_YEAR.match(stamp or "")
+            if match:
+                years.append(int(match.group(1)))
+        return years
 
     @staticmethod
     def _matches(recording: dict, artist: str, title: str) -> bool:
@@ -109,17 +145,3 @@ class YearLookup:
         )
         wanted, found = _core(artist), _core(credited)
         return bool(wanted) and (wanted in found or found in wanted)
-
-    @staticmethod
-    def _earliest(recording: dict) -> int | None:
-        years = []
-        for release in recording.get("release-list", []):
-            group = release.get("release-group") or {}
-            stamp = group.get("first-release-date") or release.get("date")
-            match = LEADING_YEAR.match(stamp or "")
-            if match:
-                years.append(int(match.group(1)))
-        plausible = [
-            year for year in years if MIN_PLAUSIBLE_YEAR <= year <= current_year()
-        ]
-        return min(plausible) if plausible else None

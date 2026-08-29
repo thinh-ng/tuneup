@@ -14,7 +14,9 @@ Titles written without tone marks carry no signal at all, so
 import logging
 from collections import defaultdict
 
+from .artists import normalise_key, split_credits
 from .config import (
+    LANGUAGE_ARTIST_OVERRIDES,
     SCRIPT_RANGES,
     STRONG_VIETNAMESE_CHARS,
     STRONG_VIETNAMESE_RANGES,
@@ -74,34 +76,59 @@ def detect_track(title: str | None, artist: str | None) -> str | None:
     return detect(title) or detect(artist)
 
 
+def _performers(credit: str | None) -> list[str]:
+    """Return the normalised name of each performer named in a credit."""
+    if not credit:
+        return []
+    return [key for key in (normalise_key(p) for p in split_credits(credit)) if key]
+
+
 def propagate_by_artist(
     detected: dict[str, str | None], artist_by_key: dict[str, str | None]
 ) -> dict[str, str | None]:
-    """Fill in unknown languages from other tracks by the same artist.
+    """Fill in unknown languages from other tracks by the same performers.
 
-    A Vietnamese title typed without tone marks is indistinguishable from
-    English by script alone. When every confident detection for an artist
-    agrees on one language, that language is applied to their unresolved
-    tracks. Artists whose detections disagree are left alone.
+    A Vietnamese title typed without tone marks, or an English title on a
+    Vietnamese song, carries no script signal at all. Evidence is gathered per
+    *performer* rather than per credit string, so a track credited to
+    ``16 Typh, Lil Wuyn`` inherits from anything either of them released under
+    any other combination. A performer whose tracks disagree teaches nothing
+    and is skipped.
+
+    ``LANGUAGE_ARTIST_OVERRIDES`` is consulted first, for artists whose
+    catalogue offers no signal anywhere in the library.
     """
-    by_artist: dict[str, set[str]] = defaultdict(set)
+    by_performer: dict[str, set[str]] = defaultdict(set)
     for key, language in detected.items():
-        artist = artist_by_key.get(key)
-        if artist and language:
-            by_artist[artist].add(language)
+        if not language:
+            continue
+        for performer in _performers(artist_by_key.get(key)):
+            by_performer[performer].add(language)
+
+    overrides = {
+        normalise_key(name): value
+        for name, value in LANGUAGE_ARTIST_OVERRIDES.items()
+    }
 
     resolved = dict(detected)
     filled = 0
     for key, language in detected.items():
         if language is not None:
             continue
-        artist = artist_by_key.get(key)
-        if not artist:
+        performers = _performers(artist_by_key.get(key))
+        if not performers:
             continue
-        candidates = by_artist.get(artist, set())
+        forced = {overrides[p] for p in performers if p in overrides}
+        if len(forced) == 1:
+            resolved[key] = next(iter(forced))
+            filled += 1
+            continue
+        candidates: set[str] = set()
+        for performer in performers:
+            candidates |= by_performer.get(performer, set())
         if len(candidates) == 1:
             resolved[key] = next(iter(candidates))
             filled += 1
     if filled:
-        log.info("propagated a language to %d tracks from their artist", filled)
+        log.info("propagated a language to %d tracks from their performers", filled)
     return resolved
