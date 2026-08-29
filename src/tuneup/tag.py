@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import language
+from .artists import normalise_key, split_credits
 from .analysis import Analyzer, AudioVerdict
 from .audiofile import iter_audio_files, open_audio
 from .config import (
@@ -32,6 +33,7 @@ from .track import ClassificationTags, SourceTags, preferred_year
 log = logging.getLogger(__name__)
 
 PROGRESS_EVERY = 25
+MIN_OVERRIDE_MATCH = 8
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,33 @@ def resolve_languages(
     return {path: resolved[str(path)] for path in sources}
 
 
+def _genre_override(credit: str | None, title: str | None = None) -> str | None:
+    """Return the configured genre for any performer named in ``credit``.
+
+    Matching folds case, punctuation and diacritics, and each credited
+    performer is checked separately, so ``Two Steps From Hell`` still hits when
+    the file credits ``Thomas Bergersen & Two Steps From Hell``.
+
+    A long override name is also matched as a substring of the credit and the
+    title together, because a cast credit does not split cleanly and the work
+    is often named in only one of the two fields: ``Do you hear the people
+    sing`` sits in the artist slot with ``Les Miserables`` as the title.
+    """
+    if not credit and not title:
+        return None
+    credit = credit or ""
+    table = {normalise_key(k): v for k, v in GENRE_ARTIST_OVERRIDES.items()}
+    for name in [credit, *split_credits(credit)]:
+        found = table.get(normalise_key(name))
+        if found:
+            return found
+    haystack = normalise_key(f"{credit} {title or ''}")
+    for key, value in table.items():
+        if len(key) >= MIN_OVERRIDE_MATCH and key in haystack:
+            return value
+    return None
+
+
 def classify(
     tags: SourceTags,
     detected_language: str | None,
@@ -103,7 +132,7 @@ def classify(
     else:
         resolved_language = detected_language or DEFAULT_LANGUAGE
 
-    override = GENRE_ARTIST_OVERRIDES.get(tags.artist or "")
+    override = _genre_override(tags.artist, tags.title)
     genre = override or (verdict.genre if verdict else None)
 
     return ClassificationTags(

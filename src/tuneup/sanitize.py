@@ -22,7 +22,7 @@ from .config import (
 )
 from .covers import CoverFetcher
 from .years import YearLookup
-from .errors import TuneupError
+from .errors import HarvestMissing, TuneupError
 from .harvest import HarvestStore
 from .track import (
     CoreTags,
@@ -42,6 +42,22 @@ class PlannedChange:
     path: Path
     core: CoreTags
     outcome: SanitizeOutcome
+
+
+def already_sanitized(library: Path, paths: list[Path]) -> set[Path]:
+    """Return the files a previous run has already rewritten.
+
+    Re-running over a rewritten file is not safe. The sanitizer prefers the
+    filename but accepts the embedded artist as corroboration, so on a second
+    pass it reads back its own output and treats it as independent evidence.
+    Where the first pass guessed, the second pass promotes that guess to
+    "confirmed" and can swap the title and artist around it.
+    """
+    try:
+        done = HarvestStore(library).load()
+    except HarvestMissing:
+        return set()
+    return {p for p in paths if p.relative_to(library).as_posix() in done}
 
 
 def collect_sources(paths: list[Path]) -> dict[Path, SourceTags]:
@@ -279,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         help="required with --apply; confirms the library is backed up",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-sanitize files a previous run already rewrote; unsafe, because "
+        "the run would read back its own output as corroboration",
+    )
+    parser.add_argument(
         "--lookup-years",
         action="store_true",
         help="ask MusicBrainz for years the files lack; adds about a quarter of "
@@ -311,6 +333,14 @@ def main(argv: list[str] | None = None) -> int:
     if not paths:
         print(f"no audio files under {args.library}", file=sys.stderr)
         return 1
+    if not args.force:
+        done = already_sanitized(args.library, paths)
+        if done:
+            log.info("skipping %d files a previous run already sanitized", len(done))
+            paths = [p for p in paths if p not in done]
+    if not paths:
+        print("every file has already been sanitized; use --force to redo them")
+        return 0
     log.info("found %d audio files", len(paths))
 
     sources = collect_sources(paths)

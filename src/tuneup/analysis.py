@@ -26,7 +26,6 @@ from .config import (
     GENRE_MODEL,
     GENRE_OUTPUT_NODE,
     HEAD_OUTPUT_NODE,
-    MOOD_CONFIDENCE,
     MOOD_MODELS,
     VOICE_MODEL,
     model_path,
@@ -189,20 +188,25 @@ class Analyzer:
         return DISCOGS_PARENT_TO_GENRE.get(best_parent, DEFAULT_GENRE)
 
     def _predict_mood(self, embeddings) -> str:
-        """Return the winning mood, or Neutral when no head is confident.
+        """Return the highest-scoring mood.
 
-        The five heads are independent yes/no classifiers, so a track can fail
-        to convince any of them. That is a real answer about the track rather
-        than a failure, and it is reported as Neutral instead of nothing.
+        The five heads are independent yes/no classifiers, so their scores are
+        only meaningful against each other. Requiring an absolute confidence
+        left a track with five middling scores unlabelled, which says less
+        about it than simply naming the one that scored highest.
+
+        Neutral survives only for a degenerate result -- every score absent or
+        not a number -- which means the audio told the models nothing at all.
         """
         scores = {}
         for mood, (head, index) in self._moods.items():
             averaged = self._numpy.mean(head(embeddings), axis=0)
-            scores[mood] = float(averaged[index])
-        best = max(scores, key=scores.get)
-        if not scores[best] >= MOOD_CONFIDENCE:
+            value = float(averaged[index])
+            if value == value:
+                scores[mood] = value
+        if not scores:
             return DEFAULT_MOOD
-        return best
+        return max(scores, key=scores.get)
 
     def _predict_instrumental(self, embeddings) -> float:
         averaged = self._numpy.mean(self._voice(embeddings), axis=0)

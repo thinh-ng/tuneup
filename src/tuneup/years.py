@@ -31,6 +31,7 @@ from .config import (
     MUSICBRAINZ_VERSION,
     current_year,
 )
+from .catalogs import DeezerCatalog, ItunesCatalog
 from .musicbrainz import RateLimiter
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class YearLookup:
             MUSICBRAINZ_APP, MUSICBRAINZ_VERSION, contact or None
         )
         self._limiter = RateLimiter(REQUEST_INTERVAL_SECONDS)
+        self._catalogues = (ItunesCatalog(), DeezerCatalog())
         self._cache: dict[tuple[str, str], int | None] = {}
 
     def find(self, artist: str | None, title: str | None) -> int | None:
@@ -79,8 +81,17 @@ class YearLookup:
         if not key[0] or not key[1]:
             return None
         if key not in self._cache:
-            self._cache[key] = self._earliest_release(artist, title)
+            self._cache[key] = self._ask_catalogues(artist, title)
         return self._cache[key]
+
+    def _ask_catalogues(self, artist: str, title: str) -> int | None:
+        """Try each catalogue in order of measured accuracy, first answer wins."""
+        for catalogue in self._catalogues:
+            year = catalogue.year_for(artist, title)
+            if year:
+                log.debug("%r / %r dated %d by %s", artist, title, year, catalogue.name)
+                return year
+        return self._earliest_release(artist, title)
 
     def _earliest_release(self, artist: str, title: str) -> int | None:
         years: list[int] = []

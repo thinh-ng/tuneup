@@ -34,7 +34,7 @@ DEFAULT_GENRE = "Other"
 DISCOGS_PARENT_TO_GENRE = {
     "Blues": "Blues",
     "Brass & Military": "Classical",
-    "Children's": "Other",
+    "Children's": "Soundtrack",
     "Classical": "Classical",
     "Electronic": "Electronic",
     "Folk, World, & Country": "Folk",
@@ -44,12 +44,57 @@ DISCOGS_PARENT_TO_GENRE = {
     "Latin": "Latin",
     "Non-Music": "Other",
     "Pop": "Pop",
-    "Reggae": "Other",
+    "Reggae": "Reggae",
     "Rock": "Rock",
     "Stage & Screen": "Soundtrack",
 }
 
-GENRE_ARTIST_OVERRIDES: dict[str, str] = {}
+GENRE_ARTIST_OVERRIDES: dict[str, str] = {
+    # Trailer and production-library music. The Discogs taxonomy the model was
+    # trained on has no epic/trailer parent, so it cannot produce this genre;
+    # these are assigned by artist instead. Matching is on the normalised name,
+    # so spelling variants and credit lists still hit.
+    "Two Steps From Hell": "Epic",
+    "Colossal Trailer Music": "Epic",
+    "Cezame Trailers": "Epic",
+    "Groove Addicts": "Epic",
+    "Sonic Librarian": "Epic",
+    "Switch. Trailer Music": "Epic",
+    "C21 FX": "Epic",
+    "Epic Music": "Epic",
+    "Ardwin Winter": "Epic",
+    "Phil Rey": "Epic",
+    "Neal Acree": "Epic",
+    "Samuel Kim": "Epic",
+    "Audiomachine": "Epic",
+    "Immediate Music": "Epic",
+    "Really Slow Motion": "Epic",
+    "Position Music": "Epic",
+    "Thomas Bergersen": "Epic",
+    "Nick Phoenix": "Epic",
+    "John Dreamer": "Epic",
+    "Mark Petrie": "Epic",
+    "Marcus Warner": "Epic",
+    "Claudie Mackula": "Epic",
+    "Kari Sigurdsson": "Epic",
+    "Evgeny Emelyanov": "Epic",
+    "Ivan Torrent": "Epic",
+    "Future World Music": "Epic",
+    "Brand X Music": "Epic",
+    "Secession Studios": "Epic",
+    "Fired Earth Music": "Epic",
+    "BrunuhVille": "Epic",
+    "Antti Martikainen": "Epic",
+    "Adrian von Ziegler": "Epic",
+    # Musical theatre and film scores the model files under a parent that does
+    # not survive the collapse to this taxonomy.
+    "Les Miserables": "Soundtrack",
+    "Les Misérables": "Soundtrack",
+    "Finding Nemo": "Soundtrack",
+    "Michael Giacchino": "Soundtrack",
+    "Bojack Horseman": "Soundtrack",
+    "Andrea Bocelli": "Classical",
+}
 
 
 def genres() -> frozenset[str]:
@@ -94,8 +139,7 @@ MIN_PLAUSIBLE_YEAR = 1900
 REISSUE_GAP_YEARS = 5
 
 INSTRUMENTAL_CONFIDENCE = 0.9
-MOOD_CONFIDENCE = 0.6
-GENRE_CONFIDENCE = 0.35
+GENRE_CONFIDENCE = 0.2
 
 MODEL_DIR = Path(os.environ.get("TUNEUP_MODEL_DIR", "/models"))
 EMBEDDING_MODEL = "discogs-effnet-bs64-1"
