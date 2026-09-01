@@ -13,7 +13,7 @@ Tag       Values                                   Source
 --------  ---------------------------------------  ----------------------------
 Language  Vietnamese, English, Chinese, Korean,    Unicode blocks and Vietnamese
           Japanese, Spanish, French, German,       diacritics in title/artist,
-          Italian, Hindi, Hebrew, Lao,             then a per-track override
+          Italian, Russian, Hindi, Hebrew, Lao,    then a per-track override
           Instrumental
 Genre     15 fixed values, incl. Bolero and        Essentia Discogs-EffNet
           Nhạc Trữ Tình                            scored by strongest style
