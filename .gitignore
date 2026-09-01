@@ -6,3 +6,8 @@ venv/
 .ruff_cache/
 models/
 .tuneup/
+
+# Music itself never enters git: 3.5 GB of audio would bloat history permanently
+# and it is not source. These directories hold the library and its audit record.
+backup-*/
+audit/
