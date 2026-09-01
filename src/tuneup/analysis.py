@@ -19,6 +19,7 @@ from .config import (
     DEFAULT_GENRE,
     DEFAULT_MOOD,
     DISCOGS_PARENT_TO_GENRE,
+    DISCOGS_STYLE_TO_GENRE,
     EMBEDDING_MODEL,
     EMBEDDING_OUTPUT_NODE,
     GENRE_CONFIDENCE,
@@ -187,12 +188,18 @@ class Analyzer:
         """
         averaged = self._numpy.mean(self._genre(embeddings), axis=0)
         strongest: dict[str, float] = {}
+        best_style: dict[str, str] = {}
         for label, score in zip(self._genre_labels, averaged, strict=True):
             parent = label.split(DISCOGS_LABEL_SEPARATOR)[0]
-            strongest[parent] = max(strongest.get(parent, 0.0), float(score))
+            if float(score) > strongest.get(parent, 0.0):
+                strongest[parent] = float(score)
+                best_style[parent] = label
         best_parent = max(strongest, key=strongest.get)
         if not strongest[best_parent] >= GENRE_CONFIDENCE:
             return DEFAULT_GENRE
+        style = best_style[best_parent]
+        if style in DISCOGS_STYLE_TO_GENRE:
+            return DISCOGS_STYLE_TO_GENRE[style]
         return DISCOGS_PARENT_TO_GENRE.get(best_parent, DEFAULT_GENRE)
 
     def _predict_mood(self, embeddings) -> str:

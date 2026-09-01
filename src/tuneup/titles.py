@@ -25,8 +25,11 @@ BARE_SITE = re.compile(
 )
 JUNK_BRACKET = re.compile(
     r"[\[\(\{]\s*(?:official\s*(?:music\s*)?(?:video|audio|mv|lyric\s*video)?"
-    r"|lyrics?(?:\s*video)?|mv|m/v|hd|hq|full\s*hd|4k|1080p|720p"
-    r"|audio|video|full|full\s*song|free\s*download|download"
+    r"|lyrics?(?:\s*video)?|mv|m\s*v|m/v|hd|hq|full\s*hd|4k(?:\s*upgrade)?"
+    r"|1080p|720p|audio|video|full|full\s*song|free\s*download|download"
+    r"|visualizer|visualiser|clip(?:\s*officiel)?|ncs\s*release"
+    r"|premium\s*content!?|subbed|colou?r\s*coded|kara(?:\s*\+\s*hd)?"
+    r"|on\s*screen\s*lyrics|hd\s*ver\.?"
     r"|\d{2,4}\s*kbps|nhac\s*chuong)\s*[\]\)\}]",
     re.IGNORECASE,
 )
@@ -34,10 +37,11 @@ UPLOAD_ID = re.compile(r"[\s_-]+\d{5,}\s*$")
 CAMEL_RUN = re.compile(r"(?<=[a-z\d])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 HAS_SPACE = re.compile(r"\s")
 TIGHT_DASH = re.compile(r"(?<=[^\s-])-(?=[^\s-])")
+NAME_START = re.compile(r"[^\Wa-z\d_]", re.UNICODE)
 BITRATE = re.compile(r"[\s_-]*\d{2,4}\s*kbps\b", re.IGNORECASE)
 BARE_JUNK_PHRASE = re.compile(
     r"\b(?:official|officiel)\s+(?:\w+\s+){0,2}?"
-    r"(?:video|audio|mv|visualizer|visualiser|version|visual|lyrics?)\b"
+    r"(?:video|audio|mv|visualizer|visualiser|visual|lyrics?)\b"
     r"|\blyrics?\s*(?:video|in\s+description)?\b"
     r"|\bfull\s+lyrics\b|\blirik(?:\s+lagu)?\b|\bterjemahan\b"
     r"|\bm/v\b|\bofficial\s*trailer\b|\bhq\b|\b1080p\b|\b720p\b",
@@ -60,7 +64,17 @@ SUBTITLE_MARKER = re.compile(
     r"|letra\s*&?\s*traducci[oó]n|tradu[çc][ãa]o|traduzione)\b",
     re.IGNORECASE,
 )
-EMPTY_BRACKET = re.compile(r"[\[\(\{][\s\-–—_.,]*[\]\)\}]")
+CJK_UPLOAD_MARKER = re.compile(r"官方\s*MV|動態歌詞|动态歌词|가사|歌詞")
+WORD_SPAN = re.compile(r"[^\W_]+", re.UNICODE)
+BRACKETED_CHAR = re.compile(r"[\[\]\(\)\{\}（）]")
+OPENS_BRACKET = re.compile(r"^[\[\(\{（]")
+TRAILING_HASHTAG = re.compile(r"\s*#[^\s#]+\s*$")
+# A container extension left inside the text, from a filename that carried two.
+STRAY_EXTENSION = re.compile(
+    r"\.(?:dat|mp3|m4a|flac|wav|ogg|opus|mp4|avi|mkv|webm)\b",
+    re.IGNORECASE,
+)
+EMPTY_BRACKET = re.compile(r"[\[\(\{（][\s\-–—_.,、　]*[\]\)\}）]")
 BRACKET_PADDING = re.compile(r"([\[\(\{])\s+|\s+([\]\)\}])")
 TRAILING_OFFICIAL = re.compile(r"[\s\-|]+official\s*$", re.IGNORECASE)
 LEADING_TRACK_NUMBER = re.compile(r"^\s*(?:#\d{1,3}\s+|\d{1,3}\s*[.)\-_]\s*)(?=\D)")
@@ -146,6 +160,7 @@ def prettify(text: str, is_filename: bool = False) -> str:
         cleaned = LEADING_TRACK_NUMBER.sub("", cleaned)
     cleaned = JUNK_BRACKET.sub(" ", cleaned)
     cleaned = BITRATE.sub(" ", cleaned)
+    cleaned = CJK_UPLOAD_MARKER.sub(" ", cleaned)
     cleaned = BARE_JUNK_PHRASE.sub(" ", cleaned)
     cleaned = SUBTITLE_MARKER.sub(" ", cleaned)
     cleaned = DESCRIPTOR_BRACKET.sub(" ", cleaned)
@@ -155,8 +170,55 @@ def prettify(text: str, is_filename: bool = False) -> str:
     cleaned = UPLOAD_ID.sub("", cleaned)
     cleaned = _split_camel(cleaned)
     cleaned = _space_tight_dash(cleaned)
+    cleaned = STRAY_EXTENSION.sub("", cleaned)
+    cleaned = TRAILING_HASHTAG.sub("", cleaned)
+    cleaned = BRACKET_PADDING.sub(lambda m: m.group(1) or m.group(2), cleaned)
+    cleaned = EMPTY_BRACKET.sub(" ", cleaned)
     cleaned = MULTI_SPACE.sub(" ", cleaned)
     return EDGE_JUNK.sub("", cleaned)
+
+
+def without_artist(title: str, artist: str | None) -> str:
+    """Drop the performer's name from the head or tail of ``title``.
+
+    An upload titled ``Linkin Park- Burn It Down`` names the artist in both
+    fields, and the duplicate is noise once Artist carries it. Only a leading
+    or trailing run of whole words is taken, and only when a usable title
+    survives, so a bracketed credit such as ``(Metallica Cover)`` and a song
+    genuinely named after its performer are both left alone.
+    """
+    if not artist or not title:
+        return title
+    words = [(m.start(), m.end()) for m in WORD_SPAN.finditer(title)]
+    wanted = [normalise_key(w) for w in WORD_SPAN.findall(artist)]
+    wanted = [w for w in wanted if w]
+    if not words or not wanted or len(wanted) > len(words):
+        return title
+    keys = [normalise_key(title[a:b]) for a, b in words]
+
+    def trimmed(start: int, end: int) -> str | None:
+        """Return ``title`` without the word span ``start``..``end``, or None."""
+        cut = title[words[start][0] : words[end][1]]
+        if BRACKETED_CHAR.search(cut):
+            return None
+        rest = title[: words[start][0]] + title[words[end][1] :]
+        rest = EDGE_JUNK.sub("", MULTI_SPACE.sub(" ", rest).strip())
+        if not is_usable(rest):
+            return None
+        if OPENS_BRACKET.match(rest):
+            return None
+        return rest
+
+    n = len(wanted)
+    if keys[:n] == wanted:
+        head = trimmed(0, n - 1)
+        if head is not None:
+            return head
+    if keys[-n:] == wanted:
+        tail = trimmed(len(words) - n, len(words) - 1)
+        if tail is not None:
+            return tail
+    return title
 
 
 def without_junk(text: str) -> str:
@@ -390,18 +452,34 @@ def _split_camel(text: str) -> str:
 
 
 def _space_tight_dash(text: str) -> str:
-    """Put spaces around a dash that separates two multi-word halves.
+    """Put spaces around a bare dash that joins a run-together title and artist.
 
     After a run-together filename is split into words, its title and artist are
-    still joined by a bare dash. A dash only becomes a separator when both
-    sides already contain a space, so hyphenated names such as ``Jay-Z`` and
-    ``Son Tung M-TP`` are left alone.
+    still joined by a bare dash. Promoting that dash to a separator is only
+    safe under every one of four conditions, because a hyphen is far more often
+    part of a name than a separator:
+
+    - the stem has no spaced separator already. When ``The All-American
+      Rejects - Move Along`` has told us where the split is, inventing a second
+      one can only destroy a hyphenated name.
+    - exactly one bare dash is present. A real separator appears once;
+      ``Spider-Man Across the Spider-Verse`` repeats its hyphens.
+    - both sides are multi-word, which is what makes ``Jay-Z`` safe.
+    - the word after the dash opens like a name, so the romanised Japanese
+      ``Te-ze`` is not mistaken for a boundary.
     """
-    for match in reversed(list(TIGHT_DASH.finditer(text))):
-        left, right = text[: match.start()], text[match.end() :]
-        if HAS_SPACE.search(left) and HAS_SPACE.search(right):
-            text = f"{left} - {right}"
-    return text
+    if ARTIST_TITLE_SPLIT.search(text):
+        return text
+    matches = list(TIGHT_DASH.finditer(text))
+    if len(matches) != 1:
+        return text
+    match = matches[0]
+    left, right = text[: match.start()], text[match.end() :]
+    if not (HAS_SPACE.search(left) and HAS_SPACE.search(right)):
+        return text
+    if not NAME_START.match(right):
+        return text
+    return f"{left} - {right}"
 
 
 def _before_pipe(text: str) -> str:

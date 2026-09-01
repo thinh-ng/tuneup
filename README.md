@@ -12,8 +12,11 @@ network in the default path, same result on every run.
 Tag       Values                                   Source
 --------  ---------------------------------------  ----------------------------
 Language  Vietnamese, English, Chinese, Korean,    Unicode blocks and Vietnamese
-          Japanese, Instrumental                   diacritics in title/artist
-Genre     16 fixed values, incl. Bolero            Essentia Discogs-EffNet
+          Japanese, Spanish, French, German,       diacritics in title/artist,
+          Italian, Hindi, Hebrew, Lao,             then a per-track override
+          Instrumental
+Genre     15 fixed values, incl. Bolero and        Essentia Discogs-EffNet
+          Nhạc Trữ Tình                            scored by strongest style
 Mood      Happy, Sad, Relaxed, Aggressive,         Essentia mood models
           Party, Neutral
 Decade    1950s-2020s, Unknown                     Original release year
@@ -74,13 +77,23 @@ Combined credits are split, so `Nguyen Hai Phong, Pmar` also vouches for
 
 ## Configuration
 
-`src/tuneup/config.py` — `DISCOGS_PARENT_TO_GENRE` shapes the taxonomy,
-`GENRE_ARTIST_OVERRIDES` assigns genres the Discogs model cannot produce (Bolero,
-Nhạc Trữ Tình), and the confidence thresholds live there.
+`src/tuneup/config.py` — `DISCOGS_PARENT_TO_GENRE` shapes the taxonomy and
+`DISCOGS_STYLE_TO_GENRE` overrides it for a style whose parent would send it to the
+wrong genre. `GENRE_ARTIST_OVERRIDES` assigns genres the Discogs model cannot
+produce (Bolero, Nhạc Trữ Tình). `LANGUAGE_TRACK_OVERRIDES` and
+`GENRE_TRACK_OVERRIDES` are keyed `artist - title`, for a catalogue that crosses
+languages or repertoires: Andrea Bocelli records in Italian, Spanish and English,
+and no artist-level entry can say that. The confidence thresholds live there too.
 
 ## Limits
 
 - Bolero and Nhạc Trữ Tình are not in the Discogs taxonomy; assign them by artist.
+  They mean the Vietnamese repertoires only. Discogs has its own `Latin---Bolero`
+  style for the Cuban and Spanish form, and that goes to Folk: the two share an
+  ancestor rhythm and nothing else.
+  Check the artist against a pre-1975 or hải ngoại discography before adding one:
+  Hoàng Trang, for instance, is both a nhạc vàng composer and a modern indie singer,
+  and only the track list says which one a file holds.
 - A Vietnamese title with no tone marks carries no language signal. It is filled from
   the artist's other tracks when those agree, otherwise it falls back to English.
 - A file with no year anywhere becomes `Unknown`. Audio-based era estimation is not
@@ -89,6 +102,15 @@ Nhạc Trữ Tình), and the confidence thresholds live there.
   library corroborates it. Look for `artist_source: filename` in the report.
 - Filenames with no separators cannot be repaired.
 - Ogg and Opus lose cover art on rewrite. MP3, FLAC and M4A keep it.
+- A download that captured the metadata and cover art but none of the audio still
+  tags cleanly. Such a file is tagged, then named in a warning at the end of the
+  run and flagged `looks_empty` in `tags.json`, because on disk it looks the
+  right size -- almost all of it is the embedded image.
+- Genre is a claim about how a recording sounds, so it holds no region or language
+  labels. Discogs' `Latin` parent collapses 35 styles from mariachi to reggaeton
+  into one bucket that only says the singer was Latin American, which the Language
+  tag already records; it maps to Folk, and Reggaeton, MPB and Bossanova are named
+  individually.
 - Artist casing is never changed — `BTS` and `ABBA` write their own names.
 
 ## The container
@@ -165,9 +187,25 @@ Leave the flag off if you want the language of the words being sung.
 Some uploads arrive as `CoChutNgotNgao-UongToLangSilenceWangBY2-3710201.mp3`:
 title, artist and an upload id run together with no spaces. Three rules recover
 them — strip a trailing numeric id, split a run of words on its capitals, then
-put spaces around a bare dash, but only when both sides are already multi-word
-so `Jay-Z`, `Son Tung M-TP`, `AC/DC` and `BY2` survive. The embedded artist tag
-settles which half is which, and restores the diacritics the filename dropped.
+promote a bare dash to a separator. The embedded artist tag settles which half is
+which, and restores the diacritics the filename dropped.
+
+That last rule is the dangerous one, because a hyphen is far more often part of a
+name than a separator. It fires only when all four of these hold:
+
+```
+no spaced " - " in the stem   the split point is already known; a second
+                              one can only break a name
+exactly one bare dash         a separator appears once, but
+                              `Spider-Man Across the Spider-Verse` repeats
+both sides multi-word         what keeps `Jay-Z` and `BY2` intact
+next word opens like a name   romanised `Te-ze` is not a boundary
+```
+
+On this library that is one filename in 836. Without the first two conditions it
+was nine, and it turned `The All-American Rejects` into an artist called
+`The All`, `Anne-Marie` into `Anne - Marie`, and `Sơn Tùng M-TP` into `Son Tung M`
+— which then escaped the spelling unifier and split him into two artists.
 
 ## The limit
 

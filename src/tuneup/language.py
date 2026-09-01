@@ -53,13 +53,19 @@ def is_vietnamese(text: str) -> bool:
 def detect(text: str | None) -> str | None:
     """Return the language of ``text``, or None when it carries no signal.
 
-    Korean, Japanese and Chinese are separated by block: kana settle Japanese,
-    and Han characters with no kana settle Chinese. Latin text with no
-    Vietnamese tone marks yields nothing, because no accent set separates the
-    remaining languages reliably enough to be worth a wrong answer.
+    Hebrew, Lao and Devanagari each own a block outright, so they are tested
+    first and settle immediately. Korean, Japanese and Chinese are separated by
+    block too: kana settle Japanese, and Han characters with no kana settle
+    Chinese. Latin text with no Vietnamese tone marks yields nothing, because no
+    accent set separates Spanish from French from Italian reliably enough to be
+    worth a wrong answer -- those arrive through an override or, with
+    ``--lookup-languages``, the artist's country.
     """
     if not text:
         return None
+    for language in ("Hebrew", "Lao", "Hindi"):
+        if _has_script(text, language):
+            return language
     if _has_script(text, "Korean"):
         return "Korean"
     if _has_script(text, "Japanese"):

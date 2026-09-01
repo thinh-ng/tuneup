@@ -25,6 +25,13 @@ LANGUAGES = (
     "Chinese",
     "Korean",
     "Japanese",
+    "Spanish",
+    "French",
+    "German",
+    "Italian",
+    "Hindi",
+    "Hebrew",
+    "Lao",
     "Instrumental",
     DEFAULT_LANGUAGE,
 )
@@ -41,12 +48,25 @@ DISCOGS_PARENT_TO_GENRE = {
     "Funk / Soul": "R&B",
     "Hip Hop": "Hip Hop",
     "Jazz": "Jazz",
-    "Latin": "Latin",
+    # Discogs' Latin parent is a region, not a sound: its 35 styles run from
+    # mariachi to reggaeton, and collapsing them to one label said only that
+    # the singer was Latin American -- which the Language tag already records.
+    # The styles are traditional dance forms, so they sum to Folk, and the
+    # three that plainly do not are named in DISCOGS_STYLE_TO_GENRE.
+    "Latin": "Folk",
     "Non-Music": "Other",
     "Pop": "Pop",
     "Reggae": "Reggae",
     "Rock": "Rock",
     "Stage & Screen": "Soundtrack",
+}
+
+# Consulted before the parent map, for a style whose parent would send it to
+# the wrong genre. Keyed on the model's full label.
+DISCOGS_STYLE_TO_GENRE = {
+    "Latin---Reggaeton": "Hip Hop",
+    "Latin---MPB": "Pop",
+    "Latin---Bossanova": "Jazz",
 }
 
 GENRE_ARTIST_OVERRIDES: dict[str, str] = {
@@ -94,6 +114,15 @@ GENRE_ARTIST_OVERRIDES: dict[str, str] = {
     "Michael Giacchino": "Soundtrack",
     "Bojack Horseman": "Soundtrack",
     "Andrea Bocelli": "Classical",
+    # Vietnamese repertoires the Discogs taxonomy has no parent for at all, so
+    # the model can never produce them. Each name below was checked against a
+    # pre-1975 or hai ngoai discography, because several are shared with a
+    # modern artist of the same name -- see the note on Hoang Trang in README.
+    "Trúc Mai": "Bolero",
+    "Họa Mi": "Bolero",
+    "Kim Anh": "Bolero",
+    "Nguyên Khang": "Nhạc Trữ Tình",
+    "Phương Phương Thảo": "Nhạc Trữ Tình",
 }
 
 
@@ -113,6 +142,48 @@ def genres() -> frozenset[str]:
 
 LANGUAGE_ARTIST_OVERRIDES: dict[str, str] = {}
 
+# Per-track overrides, keyed "artist - title" on the normalised form. An
+# artist-level entry cannot express a catalogue that crosses languages or
+# repertoires: Andrea Bocelli records in Italian, Spanish and English, and
+# Truc Mai sang a cha-cha-cha as well as bolero. These win over both the
+# artist table and the model.
+LANGUAGE_TRACK_OVERRIDES: dict[str, str] = {
+    "Andrea Bocelli - Vivo per lei": "Italian",
+    "Andrea Bocelli - Pianissimo": "Italian",
+    "Andrea Bocelli - Cuando Me Enamoro": "Spanish",
+    "Andrea Bocelli - Quizás, Quizás, Quizás": "Spanish",
+    "Toto Cutugno - L'Italiano": "Italian",
+    "La Casa De Papel - Bella Ciao": "Italian",
+    "Édith Piaf - Non, Je ne regrette rien": "French",
+    "Maître Gims - Bella": "French",
+    "Kendji Girac - Andalouse": "French",
+    "Kids United - On écrit sur les murs": "French",
+    "Magic System - Magic In The Air": "French",
+    "Soprano - Cosmo": "French",
+    "Téléphone - Hygiaphone": "French",
+    "Camille - Le Festin": "French",
+    "Faun - Federkleid": "German",
+    "Juanes - Es Por Ti": "Spanish",
+    "Juanes - Para Tu Amor": "Spanish",
+    "Julieta Venegas - Me Voy": "Spanish",
+    "Banda Roja de Jose Leon - La Camisa Negra": "Spanish",
+    "Los Dorados - La Cucaracha": "Spanish",
+    "Los Zafiros - He Venido": "Spanish",
+    "Santana - La Flaca": "Spanish",
+    "Udit Narayan - Yun Hi Chala Chal": "Hindi",
+    "Omer Adam - Tel Aviv": "Hebrew",
+    "Phouvieng - Pheng Lao Souk San Van Pi Mai": "Lao",
+    "Chayanne - Bailando Bachata": "Spanish",
+    "La Sonora Dinamita - Mi CuCu": "Spanish",
+    "Los Panchos - Perfidia": "Spanish",
+}
+
+# Empty for now. A per-track genre entry is for a recording that genuinely
+# departs from its artist's repertoire -- not for one whose rhythm happens to
+# come from elsewhere. Y Vân wrote "Sài Gòn" over a cha-cha-chá, and it is
+# still a pre-1975 Vietnamese song, so it belongs with the rest of Trúc Mai's.
+GENRE_TRACK_OVERRIDES: dict[str, str] = {}
+
 COUNTRY_LANGUAGE = {
     "VN": "Vietnamese",
     "KR": "Korean",
@@ -120,6 +191,18 @@ COUNTRY_LANGUAGE = {
     "CN": "Chinese",
     "TW": "Chinese",
     "HK": "Chinese",
+    "ES": "Spanish",
+    "MX": "Spanish",
+    "AR": "Spanish",
+    "CO": "Spanish",
+    "CU": "Spanish",
+    "FR": "French",
+    "DE": "German",
+    "AT": "German",
+    "IT": "Italian",
+    "IN": "Hindi",
+    "IL": "Hebrew",
+    "LA": "Lao",
 }
 
 NON_ARTIST_WORDS = frozenset({
@@ -173,6 +256,9 @@ SCRIPT_RANGES = {
     "Korean": ((0x1100, 0x11FF), (0x3130, 0x318F), (0xAC00, 0xD7A3)),
     "Japanese": ((0x3040, 0x309F), (0x30A0, 0x30FF)),
     "Chinese": ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF)),
+    "Hebrew": ((0x0590, 0x05FF), (0xFB1D, 0xFB4F)),
+    "Lao": ((0x0E80, 0x0EFF),),
+    "Hindi": ((0x0900, 0x097F),),
 }
 
 

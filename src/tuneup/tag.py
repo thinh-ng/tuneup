@@ -19,6 +19,8 @@ from .audiofile import iter_audio_files, open_audio
 from .config import (
     DEFAULT_LANGUAGE,
     GENRE_ARTIST_OVERRIDES,
+    GENRE_TRACK_OVERRIDES,
+    LANGUAGE_TRACK_OVERRIDES,
     INSTRUMENTAL_CONFIDENCE,
     TAGS_FILENAME,
     decade_for,
@@ -28,6 +30,7 @@ from .config import (
 from .errors import HarvestMissing, TuneupError
 from .harvest import HarvestStore
 from .origins import ArtistOrigin
+from .titles import BARE_FEATURE, BRACKETED
 from .track import ClassificationTags, SourceTags, preferred_year
 
 log = logging.getLogger(__name__)
@@ -48,6 +51,14 @@ class TaggedTrack:
     mood: str | None
     decade: str
     duration: str | None
+    looks_empty: bool = False
+    """True when the file carries no readable audio stream.
+
+    A download that captured the metadata and cover art but none of the audio
+    still tags cleanly, so nothing else in the run would notice it. The file is
+    tagged anyway -- it is not this tool's place to decide a file is worthless
+    -- but it is named in the report and in a warning at the end of the run.
+    """
 
 
 def read_library(paths: list[Path]) -> dict[Path, SourceTags]:
@@ -117,6 +128,51 @@ def _genre_override(credit: str | None, title: str | None = None) -> str | None:
     return None
 
 
+def _track_key(artist: str | None, title: str | None) -> str | None:
+    """Return the normalised ``artist - title`` key for the override tables."""
+    if not artist or not title:
+        return None
+    return f"{normalise_key(artist)}-{normalise_key(title)}"
+
+
+def _track_override(table, artist, title):
+    """Return ``table``'s value for this track, matching on the folded key.
+
+    Every credited performer is tried separately, so an entry for ``Andrea
+    Bocelli`` still catches ``Andrea Bocelli & Giorgia``. The title is tried
+    both whole and with a trailing credit removed, bracketed or bare, so
+    ``Bella Ciao`` catches ``Bella Ciao (Money Heist)`` and ``La Flaca``
+    catches ``La Flaca ft. Juanes``.
+    """
+    if not artist or not title:
+        return None
+    folded = {}
+    for entry, value in table.items():
+        if " - " not in entry:
+            continue
+        name, song = entry.split(" - ", 1)
+        key = _track_key(name, song)
+        if key:
+            folded[key] = value
+    if not folded:
+        return None
+
+    titles = [title]
+    stripped = BRACKETED.sub("", title).strip()
+    if stripped and stripped != title:
+        titles.append(stripped)
+    cut = BARE_FEATURE.split(stripped or title)[0].strip()
+    if cut and cut not in titles:
+        titles.append(cut)
+
+    for name in [artist, *split_credits(artist)]:
+        for candidate in titles:
+            key = _track_key(name, candidate)
+            if key and key in folded:
+                return folded[key]
+    return None
+
+
 def classify(
     tags: SourceTags,
     detected_language: str | None,
@@ -127,12 +183,17 @@ def classify(
         verdict is not None
         and verdict.instrumental_confidence >= INSTRUMENTAL_CONFIDENCE
     )
-    if is_instrumental:
+    track_language = _track_override(LANGUAGE_TRACK_OVERRIDES, tags.artist, tags.title)
+    if track_language:
+        resolved_language = track_language
+    elif is_instrumental:
         resolved_language = "Instrumental"
     else:
         resolved_language = detected_language or DEFAULT_LANGUAGE
 
-    override = _genre_override(tags.artist, tags.title)
+    override = _track_override(GENRE_TRACK_OVERRIDES, tags.artist, tags.title) or _genre_override(
+        tags.artist, tags.title
+    )
     genre = override or (verdict.genre if verdict else None)
 
     return ClassificationTags(
@@ -182,6 +243,7 @@ def run(
                 mood=resolved.mood,
                 decade=resolved.decade,
                 duration=resolved.duration,
+                looks_empty=not tags.length_seconds,
             )
         )
         if index % PROGRESS_EVERY == 0:
@@ -267,6 +329,15 @@ def main(argv: list[str] | None = None) -> int:
 
     rows, failures = run(sources, languages, analyzer, args.apply)
     report = write_report(args.library, rows)
+    hollow = [row for row in rows if row.looks_empty]
+    if hollow:
+        log.warning(
+            "%d file(s) carry no readable audio and are probably failed "
+            "downloads. They were tagged, but they will not play:",
+            len(hollow),
+        )
+        for row in hollow:
+            log.warning("  %s", row.path)
 
     if not args.apply:
         print(f"dry run: classified {len(rows)} files, nothing written")

@@ -150,7 +150,7 @@ def plan(
             else None
         )
         core = CoreTags(
-            title=choice.title,
+            title=titles.without_artist(choice.title, artist),
             artist=artist,
             album=album or None,
             year=preferred_year(tags),
