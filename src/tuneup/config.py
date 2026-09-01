@@ -29,6 +29,7 @@ LANGUAGES = (
     "French",
     "German",
     "Italian",
+    "Russian",
     "Hindi",
     "Hebrew",
     "Lao",
@@ -202,6 +203,9 @@ COUNTRY_LANGUAGE = {
     "IT": "Italian",
     "IN": "Hindi",
     "IL": "Hebrew",
+    "RU": "Russian",
+    "UA": "Russian",
+    "BY": "Russian",
     "LA": "Lao",
 }
 
@@ -257,6 +261,7 @@ SCRIPT_RANGES = {
     "Japanese": ((0x3040, 0x309F), (0x30A0, 0x30FF)),
     "Chinese": ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF)),
     "Hebrew": ((0x0590, 0x05FF), (0xFB1D, 0xFB4F)),
+    "Russian": ((0x0400, 0x04FF), (0x0500, 0x052F)),
     "Lao": ((0x0E80, 0x0EFF),),
     "Hindi": ((0x0900, 0x097F),),
 }
