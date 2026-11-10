@@ -11,3 +11,5 @@ models/
 # and it is not source. These directories hold the library and its audit record.
 backup-*/
 audit/
+
+.claude/
